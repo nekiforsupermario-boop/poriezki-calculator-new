@@ -640,3 +640,12 @@ new MutationObserver(() => {
     input.addEventListener('focus', () => { if (numericInputValue(input.value) === 0) input.value = ''; });
   }
 }).observe(document.body, { childList: true, subtree: true });
+function refreshTypeSpecificFields() {
+  const hideLength = selectedType === 'strip' || selectedType === 'rewind';
+  const lengthField = document.querySelector('.length-field');
+  if (lengthField) { lengthField.hidden = hideLength; lengthField.style.display = hideLength ? 'none' : ''; }
+  const batchToggle = document.querySelector('.batch-toggle');
+  if (batchToggle) batchToggle.hidden = selectedType === 'strip';
+}
+refreshTypeSpecificFields();
+document.querySelectorAll('.type-card').forEach(card => card.addEventListener('click', () => setTimeout(refreshTypeSpecificFields, 0)));
