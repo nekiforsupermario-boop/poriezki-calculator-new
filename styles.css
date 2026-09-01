@@ -25,3 +25,12 @@ select{display:block;width:100%;margin-top:7px;border:1px solid #d8e0e6;border-r
 .scrap-cell small{display:block;color:#aeb6bf;font-size:11px;margin-top:3px}
 .cut-plan{margin-top:9px;min-width:260px;font-size:11px;color:#cbd3da}.cut-plan summary{display:inline-block;color:#ff9a4c;cursor:pointer;font-weight:700}.cut-plan-line{margin-top:7px;padding:7px 8px;border-left:2px solid #f47721;background:#292f35;line-height:1.45}.cut-plan-line b{color:#ff9a4c;margin-right:4px}.cut-plan-line strong{color:#f0f3f6}.cut-plan-line span{display:block;color:#aeb6bf;margin-top:2px}
  .length-field[hidden]{display:none!important}
+/* Локальная компактная компоновка параметров по образцу блока «Позиции заявки». */
+.field-grid{grid-template-columns:minmax(140px,1.25fr) repeat(6,minmax(82px,1fr));align-items:end;gap:12px 9px}
+.field-grid label,.field-grid fieldset{min-width:0}
+.field-grid input,.field-grid select{min-width:0}
+.field-grid .length-field{grid-column:auto}
+.field-grid .surface-field{grid-column:auto}
+@media(max-width:900px){.field-grid{grid-template-columns:repeat(4,minmax(100px,1fr))}}
+@media(max-width:650px){.field-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.standalone-strip-size-mode{display:flex;flex-wrap:nowrap;white-space:nowrap;gap:18px;margin:0 0 12px;align-items:center}

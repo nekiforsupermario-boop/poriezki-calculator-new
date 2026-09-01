@@ -32,7 +32,7 @@ const PRICE = {
   },
   rewind: { full: 4010, partial: 6165, open: 3460, narrowThin: { full: 4083, partial: 6372, open: 3460 }, minTons: 3 },
   grinding: { rollMinTons: 3, sheetMinTons: 3, roll: [{ max: .6, full: 8901, partial: 11790, open: 8254 }, { max: .8, full: 7469, partial: 10071, open: 6822 }, { max: 1, full: 6545, partial: 8962, open: 5898 }, { max: 1.5, full: 5944, partial: 8242, open: 5297 }, { max: 3, full: 5482, partial: 7687, open: 4835 }, { max: 5, full: 4928, partial: 7022, open: 4281 }], sheet: 10900, rewind: { full: 3760, partial: 5772, open: 3183 } },
-  film: { roll: 1600, sheet: [{ max: 1.5, price: 6400 }, { max: 5, price: 4400 }] }, density: 7.8
+  film: { pePerMeter: 60, lpePerMeter: 80 }, density: 7.8
 };
 const COIL_WIDTHS = [1000, 1250, 1500];
 const getRadio = name => document.querySelector(`input[name="${name}"]:checked`).value;
@@ -50,11 +50,11 @@ function stripLayoutScore(layout, orders) { const desired = new Map(); orders.fo
 function setType(type) { selectedType = type; addOpenModeField(); updateRewindWidthControl(); document.querySelectorAll('label').forEach(label => { if (label.firstChild) label.firstChild.textContent = label.firstChild.textContent.replace(/руб\/т(?!н)/, 'руб/тн'); }); document.querySelectorAll('.type-card').forEach(card => card.classList.toggle('selected', card.dataset.type === type)); $('paramsTitle').textContent = `Параметры ${typeNames[type]}`; document.querySelector('.length-field').hidden = type === 'strip' || type === 'rewind'; updateStripSizeControl(); updateUnits(); }
 function thicknessBand(t) { return t <= .6 ? 0 : t <= .8 ? 1 : t <= 1 ? 2 : t <= 1.5 ? 3 : t <= 3 ? 4 : t <= 5 ? 5 : -1; }
 function grindingPrice(type, thickness, volume, mode) { const band = PRICE.grinding.roll[thicknessBand(thickness)]; return band ? band[mode] * Math.max(volume, PRICE.grinding.rollMinTons) / volume : 0; }
-function filmPrice(type, thickness, yieldRate) { if (getRadio('film') === 'none') return 0; const sides = getRadio('filmSides') === 'two' ? 2 : 1; const sourceWidthFactor = 1 / Math.max(yieldRate, 0.000001); if (type === 'strip' || type === 'rewind' || type === 'card') return PRICE.film.roll * sides * sourceWidthFactor; const band = PRICE.film.sheet.find(item => thickness <= item.max); return band ? band.price * sides * sourceWidthFactor : 0; }
+function filmPrice(type, thickness, yieldRate, coilWidth) { const film = getRadio('film'); if (film === 'none') return 0; const sides = getRadio('filmSides') === 'two' ? 2 : 1; const pricePerMeter = film === 'lpe' ? PRICE.film.lpePerMeter : PRICE.film.pePerMeter; const width = Number(coilWidth) || 1250; const tonsPerMeter = thickness * width * PRICE.density * 0.000001; return tonsPerMeter > 0 ? pricePerMeter * sides / tonsPerMeter : 0; }
 function stripBand(width) { return width > 30 ? '>30' : width >= 19 ? '19-30' : width >= 12 ? '12-18.9' : '5-11.9'; }
 function maxStrips(thickness, coilWidth) { if ((selectedType === 'strip' || selectedType === 'card') && thickness > 2) return 0; const band = thickness <= .6 ? 0 : thickness <= .8 ? 1 : thickness <= 1 ? 2 : thickness <= 1.2 ? 3 : thickness <= 1.5 ? 4 : 5; const limits = coilWidth < 500 ? [15, 15, 13, 13, 0, 7] : coilWidth < 1000 ? [16, 16, 13, 13, 0, 7] : [25, 21, 20, 17, 15, 10]; return limits[band] || 0; }
 function longitudinalRate(width, mode, coilWidth) { const table = coilWidth < 500 || width < 20 ? PRICE.longitudinal.narrow : PRICE.longitudinal.standard; return table[stripBand(width)]?.[mode] || 0; }
-function quantityToTons(quantity, unit, thickness, width, length) { if (unit === 'tons') return quantity; if (unit === 'meters') return quantity * thickness * width * PRICE.density * 0.0000078; return quantity * thickness * (width / 1000) * (length / 1000) * PRICE.density / 1000; }
+function quantityToTons(quantity, unit, thickness, width, length) { if (unit === 'tons') return quantity; if (unit === 'meters') return quantity * thickness * width * PRICE.density * 0.000001; return quantity * thickness * (width / 1000) * (length / 1000) * PRICE.density / 1000; }
 
 function serviceData(coilWidth, productWidth, thickness, volume, price, cardSize = '') {
   const laneWidths = Array.isArray(productWidth) ? productWidth : [productWidth], usedWidth = laneWidths.reduce((sum, width) => sum + width, 0), pieces = selectedType === 'rewind' ? 1 : laneWidths.length, scrap = coilWidth - usedWidth, yieldRate = usedWidth / coilWidth;
@@ -65,7 +65,7 @@ function serviceData(coilWidth, productWidth, thickness, volume, price, cardSize
   if (selectedType === 'strip' || selectedType === 'card') { const cutMode = hasGrinding ? postProcessingMode : openCutMode, tariffWidth = Math.max(...laneWidths); firstCut = longitudinalRate(tariffWidth, cutMode, coilWidth); if (!firstCut) return null; firstCut = charge(firstCut, volume, PRICE.longitudinal.minTons, cutMode); if ($('specialConditions')?.checked) firstCut += PRICE.longitudinal.special; if ($('furtherProcessing')?.checked) firstCut = Math.max(0, firstCut - PRICE.longitudinal.followUpDiscount); operations.push({ name: selectedType === 'card' ? (hasGrinding ? '2. Продольная резка в ленту' : '1. Продольная резка в ленту') : hasGrinding ? '2. Продольная резка в ленту' : '1. Продольная резка в ленту', mode: cutMode === 'open' ? 'открытый рулон до конца' : cutMode === 'full' ? 'полный рулон' : 'частичный рулон', price: firstCut }); }
   if (selectedType === 'rewind') { const tariff = thickness <= .4 ? PRICE.rewind.narrowThin : PRICE.rewind, rewindMode = hasGrinding ? postProcessingMode : openCutMode; firstCut = charge(tariff[rewindMode], volume, PRICE.rewind.minTons, rewindMode); if ($('specialConditions')?.checked) firstCut += PRICE.longitudinal.special; operations.push({ name: hasGrinding ? '2. Перемотка рулона' : '1. Перемотка рулона', mode: rewindMode === 'open' ? 'открытый рулон до конца' : rewindMode === 'full' ? 'полный рулон' : 'частичный рулон', price: firstCut }); }
   let secondCut = 0; if (selectedType === 'sheet' || selectedType === 'card') { const cutMode = hasGrinding ? postProcessingMode : openCutMode; secondCut = charge(PRICE.crossCut[cutMode], volume, PRICE.crossCut.minTons, cutMode); if ($('specialConditions')?.checked) secondCut += PRICE.crossCut.special; if ($('noPallet')?.checked) secondCut = Math.max(0, secondCut - 500); operations.push({ name: selectedType === 'card' ? '3. Поперечная резка в карточки' : hasGrinding ? '2. Поперечная резка в лист' : '1. Поперечная резка в лист', mode: cutMode === 'open' ? 'открытый рулон до конца' : cutMode === 'full' ? 'полный рулон' : 'частичный рулон', price: secondCut }); } else if ($('noPallet')?.checked) firstCut = Math.max(0, firstCut - 500);
-  const film = filmPrice(selectedType, thickness, yieldRate); if (film) operations.push({ name: 'Плёнка', mode: getRadio('filmSides') === 'two' ? 'с двух сторон' : 'с одной стороны', price: film });
+  const film = filmPrice(selectedType, thickness, yieldRate, coilWidth); if (film) operations.push({ name: 'Плёнка', mode: getRadio('filmSides') === 'two' ? 'с двух сторон' : 'с одной стороны', price: film });
   const materialCost = Number($('materialCost').value), effectiveMaterial = materialCost / yieldRate, scrapCost = materialCost * (1 - yieldRate) / yieldRate, processing = operations.reduce((sum, item) => sum + item.price, 0);
   return { coilWidth, pieces, scrap, yieldRate, price, cardSize, effectiveMaterial, scrapCost, cutting: firstCut + secondCut, firstCut, secondCut, grinding, film, processing, total: price + processing + scrapCost, mode, operations };
 }
@@ -114,18 +114,18 @@ function subcutLayouts(coilWidth, stripWidth, thickness) {
 function serviceDataWithSubcut(coilWidth, stripWidth, thickness, volume, price, layout) {
   const base = serviceData(coilWidth, layout.widths, thickness, volume, price, layout.label);
   if (!base) return null;
-  const openMode = 'open', hasGrinding = getRadio('surface') === '4n';
-  const firstRate = longitudinalRate(Math.max(...layout.widths), openMode, coilWidth);
-  const secondRate = longitudinalRate(stripWidth, openMode, Math.max(...layout.widths));
+  const firstMode = getRadio('openMode') || 'partial', secondMode = 'open', hasGrinding = getRadio('surface') === '4n';
+  const firstRate = longitudinalRate(Math.max(...layout.widths), firstMode, coilWidth);
+  const secondRate = longitudinalRate(stripWidth, secondMode, Math.max(...layout.widths));
   if (!firstRate || !secondRate) return null;
-  const first = charge(firstRate, volume, PRICE.longitudinal.minTons, openMode);
-  const second = charge(secondRate, volume, PRICE.longitudinal.minTons, openMode);
+  const first = charge(firstRate, volume, PRICE.longitudinal.minTons, firstMode);
+  const second = charge(secondRate, volume, PRICE.longitudinal.minTons, secondMode);
   const surcharge = $('specialConditions')?.checked ? PRICE.longitudinal.special : 0;
   const discount = $('furtherProcessing')?.checked ? PRICE.longitudinal.followUpDiscount : 0;
   const subcutPrice = Math.max(0, first + surcharge);
   const finalPrice = Math.max(0, second + surcharge - discount);
   const replacement = [
-    { name: hasGrinding ? '2. Продольная резка подкатов' : '1. Продольная резка подкатов', mode: 'открытый рулон до конца', price: subcutPrice },
+    { name: hasGrinding ? '2. Продольная резка подкатов' : '1. Продольная резка подкатов', mode: firstMode === 'open' ? 'открытый рулон до конца' : firstMode === 'full' ? 'полностью рулон' : 'частичный рулон', price: subcutPrice },
     { name: hasGrinding ? '3. Продольная резка в ленту' : '2. Продольная резка в ленту', mode: 'открытый рулон до конца', price: finalPrice }
   ];
   const oldCutting = base.operations.filter(operation => operation.name.includes('Продольная резка')).reduce((sum, operation) => sum + operation.price, 0);
@@ -146,7 +146,7 @@ function serviceDataWithSubcut(coilWidth, stripWidth, thickness, volume, price, 
   base.firstCut = subcutPrice;
   base.secondCut = finalPrice;
   base.cutting = base.cutting - oldCutting + subcutPrice + finalPrice;
-  const film = filmPrice(selectedType, thickness, base.yieldRate), filmIndex = base.operations.findIndex(operation => operation.name === 'Плёнка');
+  const film = filmPrice(selectedType, thickness, base.yieldRate, base.coilWidth), filmIndex = base.operations.findIndex(operation => operation.name === 'Плёнка');
   if (filmIndex >= 0) base.operations[filmIndex].price = film;
   else if (film) base.operations.push({ name: 'Плёнка', mode: getRadio('filmSides') === 'two' ? 'с двух сторон' : 'с одной стороны', price: film });
   base.film = film;
@@ -405,7 +405,7 @@ function calculateBatch() {
     const quantity = getRadio('unit') === 'tons'
       ? groupVolume
       : getRadio('unit') === 'meters'
-        ? groupVolume / (input.thickness * input.width * PRICE.density * 0.0000078)
+        ? groupVolume / (input.thickness * input.width * PRICE.density * 0.000001)
         : groupVolume / (input.thickness * (input.width / 1000) * ((input.length || 1) / 1000) * PRICE.density / 1000);
     $('thickness').value = input.thickness; $('productWidth').value = input.width; $('productLength').value = input.length; $('quantity').value = quantity; $('materialCost').value = input.materialCost; $('price').value = input.price;
     document.querySelector(`input[name="surface"][value="${input.surface}"]`)?.click();
@@ -645,7 +645,39 @@ function refreshTypeSpecificFields() {
   const lengthField = document.querySelector('.length-field');
   if (lengthField) { lengthField.hidden = hideLength; lengthField.style.display = hideLength ? 'none' : ''; }
   const batchToggle = document.querySelector('.batch-toggle');
-  if (batchToggle) batchToggle.hidden = selectedType === 'strip';
+  if (batchToggle) { batchToggle.hidden = selectedType === 'strip'; batchToggle.style.display = selectedType === 'strip' ? 'none' : ''; }
 }
 refreshTypeSpecificFields();
 document.querySelectorAll('.type-card').forEach(card => card.addEventListener('click', () => setTimeout(refreshTypeSpecificFields, 0)));
+const serviceDataWithIntegratedFilm = serviceData;
+serviceData = function (...args) {
+  const result = serviceDataWithIntegratedFilm(...args);
+  if (selectedType === 'rewind' && getRadio('surface') === '4n' && result?.operations) {
+    const rewind = result.operations.find(operation => operation.name === '2. Перемотка рулона');
+    if (rewind) {
+      result.operations = result.operations.filter(operation => operation !== rewind);
+      result.processing = Math.max(0, result.processing - rewind.price);
+      result.cutting = Math.max(0, result.cutting - rewind.price);
+      result.firstCut = Math.max(0, result.firstCut - rewind.price);
+      result.total = Math.max(0, result.total - rewind.price);
+    }
+  }
+  return result;
+};
+function placeStripSizeMode() {
+  const mode = document.querySelector('.strip-size-mode'), fieldGrid = document.querySelector('#paramsStep .field-grid');
+  if (!mode || !fieldGrid || mode.parentElement === fieldGrid.parentElement) return;
+  fieldGrid.before(mode);
+  mode.classList.add('standalone-strip-size-mode');
+}
+placeStripSizeMode();
+new MutationObserver(placeStripSizeMode).observe(document.body, { childList: true, subtree: true });
+const surfaceField = document.querySelector('#paramsStep .surface-field');
+if (surfaceField && !surfaceField.querySelector('#surfaceSelect')) {
+  const currentSurface = document.querySelector('input[name="surface"]:checked')?.value || '2b';
+  surfaceField.insertAdjacentHTML('afterbegin', '<select id="surfaceSelect" aria-label="Поверхность"><option value="2b">2B</option><option value="1d">1D</option><option value="ba">BA</option><option value="m2b">М2Б</option><option value="4n">Шлифовка</option></select>');
+  const surfaceSelect = surfaceField.querySelector('#surfaceSelect');
+  surfaceSelect.value = currentSurface;
+  surfaceSelect.addEventListener('change', () => document.querySelector(`input[name="surface"][value="${surfaceSelect.value}"]`)?.click());
+  surfaceField.querySelectorAll('label.radio').forEach(label => { label.hidden = true; label.style.display = 'none'; });
+}
