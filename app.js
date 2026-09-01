@@ -295,7 +295,7 @@ $('calculateButton').addEventListener('click', () => { if (!$('error').hidden ||
             sheet.getCell('AJ7').value = 'прайс';
             sheet.getCell('AJ8').value = Number($('price')?.value) || lastCalculation?.best?.price || 0;
           }
-          for (let row = 45; row <= 58; row += 1) if (sheet.getRow(row).getCell(2).value) sheet.getRow(row).getCell(14).value = 2300;
+          for (let row = 45; row <= 58; row += 1) if (sheet.getRow(row).getCell(2).value) sheet.getRow(row).getCell(14).value = 2800;
         }
         const originalGetCell = sheet?.getCell?.bind(sheet);
         if (sheet && originalGetCell) sheet.getCell = (address, ...cellArgs) => { const cell = originalGetCell(address, ...cellArgs); if (address === 'Q1') return new Proxy(cell, { set(target, property, value) { target[property] = property === 'value' && value === 'руб' ? 'рубли' : value; return true; } }); return cell; };
