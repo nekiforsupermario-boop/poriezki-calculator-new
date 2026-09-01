@@ -322,8 +322,8 @@ function batchRowMarkup(row = {}) {
     ${lengthField}
     <label>Поверхность<select class="batch-surface">${surfaceOptions}</select></label>
     <label>Количество<input class="batch-quantity" type="number" min="0.001" step="0.001" value="${row.quantity ?? 1}" placeholder="Вес / штуки"></label>
-    <label>Себестоимость, руб/т<input class="batch-material" type="text" inputmode="decimal" value="${row.materialCost ?? 172000}" placeholder="Себестоимость"></label>
-    <label>Прайс, руб/т<input class="batch-price" type="text" inputmode="decimal" value="${row.price ?? 172000}" placeholder="Прайс"></label>
+    <label>Себестоимость, руб/т<input class="batch-material" type="text" inputmode="decimal" value="${row.materialCost ?? 0}" placeholder="Себестоимость"></label>
+    <label>Прайс, руб/т<input class="batch-price" type="text" inputmode="decimal" value="${row.price ?? 0}" placeholder="Прайс"></label>
     <button class="button ghost batch-remove" type="button" aria-label="Удалить позицию">×</button>
   </div>`;
 }
@@ -353,7 +353,7 @@ function updateBatchVisibility() {
   if (!host.querySelector('.batch-row')) {
     host.innerHTML = `<div class="batch-heading"><strong>Позиции заявки</strong><span>У каждой позиции свои размеры, толщина, марка, поверхность, себестоимость и прайс. Одинаковые марка + толщина + ширина + поверхность автоматически объединяются в один рулон.</span></div><div class="batch-rows"></div><button class="button ghost batch-add" type="button">+ Добавить типоразмер</button>`;
     const rows = host.querySelector('.batch-rows');
-    rows.insertAdjacentHTML('beforeend', batchRowMarkup({ grade: $('materialGrade')?.value || 'AISI 201 J4', width: Number($('productWidth')?.value) || 1250, length: Number($('productLength')?.value) || 2500, thickness: Number($('thickness')?.value) || 1.2, quantity: Number($('quantity')?.value) || 1, materialCost: Number($('materialCost')?.value) || 172000, price: Number($('price')?.value) || 172000 }));
+    rows.insertAdjacentHTML('beforeend', batchRowMarkup({ grade: $('materialGrade')?.value || 'AISI 201 J4', width: Number($('productWidth')?.value) || 1250, length: Number($('productLength')?.value) || 2500, thickness: Number($('thickness')?.value) || 1.2, quantity: Number($('quantity')?.value) || 1, materialCost: Number($('materialCost')?.value) || 0, price: Number($('price')?.value) || 0 }));
     rows.querySelectorAll('.batch-material,.batch-price').forEach(bindAmountFormatting);
     host.querySelector('.batch-add').addEventListener('click', () => {
       const source = rows.lastElementChild;
@@ -526,7 +526,7 @@ exportBatchPurchaseCalculationToExcel = async function(file) {
 function surfaceLabelFor(surface) { return ({ '2b': '2B', '1d': '1D', ba: 'BA', m2b: 'М2Б', '4n': 'N4' })[surface] || '2B'; }
 function numericInputValue(value) { return Number(String(value ?? '').replace(/\s/g, '').replace(',', '.')) || 0; }
 function formatAmountInput(input) { const value = numericInputValue(input.value); if (value) input.value = value.toLocaleString('ru-RU', { maximumFractionDigits: 2 }).replace(/\u00a0/g, ' '); }
-function bindAmountFormatting(input) { if (!input || input.dataset.amountBound === '1') return; input.type = 'text'; input.inputMode = 'decimal'; input.dataset.amountBound = '1'; input.addEventListener('focus', () => { input.value = String(input.value).replace(/\s/g, ''); }); input.addEventListener('blur', () => formatAmountInput(input)); formatAmountInput(input); }
+function bindAmountFormatting(input) { if (!input || input.dataset.amountBound === '1') return; input.type = 'text'; input.inputMode = 'decimal'; input.dataset.amountBound = '1'; input.addEventListener('focus', () => { input.value = numericInputValue(input.value) === 0 ? '' : String(input.value).replace(/\s/g, ''); }); input.addEventListener('blur', () => formatAmountInput(input)); formatAmountInput(input); }
 
 function setupBatchPurchaseWindow() {
   if (!lastCalculation?.batch || $('batchPurchaseFields')) return;
@@ -542,7 +542,7 @@ function setupBatchPurchaseWindow() {
   const currencyLabel = $('purchaseCurrency')?.closest('label'), rateBox = $('cbrRate')?.closest('.purchase-rate');
   if (currencyLabel) block.appendChild(currencyLabel);
   if (rateBox) block.appendChild(rateBox);
-  groups.forEach(([key, item], index) => { const label = document.createElement('label'); label.className = 'purchase-field'; label.innerHTML = `Группа ${index + 1}: ${item.input.grade} · ${decimal(item.input.width)} мм · ${decimal(item.input.thickness)} мм · ${surfaceLabelFor(item.input.surface)}<input class="batch-purchase-price" data-group="${key}" type="text" inputmode="decimal" min="0" placeholder="Цена закупки, валют/т" value="">`; block.appendChild(label); });
+  groups.forEach(([key, item], index) => { const label = document.createElement('label'); label.className = 'purchase-field'; label.innerHTML = `Группа ${index + 1}: ${item.input.grade} · ${decimal(item.input.width)} мм · ${decimal(item.input.thickness)} мм · ${surfaceLabelFor(item.input.surface)}<input class="batch-purchase-price" data-group="${key}" type="text" inputmode="decimal" min="0" placeholder="Цена закупки, валют/т" value="0">`; block.appendChild(label); });
   meta.before(block);
   const sale = $('salePrice')?.closest('label'); if (sale) sale.hidden = true;
   const final = $('finalPrice')?.closest('label'); if (final) final.hidden = true;
@@ -623,7 +623,20 @@ function applyTypeStartDefaults(type) {
   if ($('productWidth')) $('productWidth').value = '1250';
   if ($('productLength')) $('productLength').value = '2500';
   if ($('quantity')) $('quantity').value = '1';
+  if ($('materialCost')) $('materialCost').value = '0';
+  if ($('price')) $('price').value = '0';
   setType(type);
 }
 if (!localStorage.getItem('metal-cutter-values')) applyTypeStartDefaults(selectedType);
 document.querySelectorAll('.type-card').forEach(card => card.addEventListener('click', () => applyTypeStartDefaults(card.dataset.type)));
+['materialCost', 'price', 'purchasePrice'].forEach(id => {
+  const input = $(id);
+  if (input) input.addEventListener('focus', () => { if (numericInputValue(input.value) === 0) input.value = ''; });
+});
+new MutationObserver(() => {
+  const input = $('purchasePrice');
+  if (input && input.dataset.zeroFocusBound !== '1') {
+    input.dataset.zeroFocusBound = '1';
+    input.addEventListener('focus', () => { if (numericInputValue(input.value) === 0) input.value = ''; });
+  }
+}).observe(document.body, { childList: true, subtree: true });
