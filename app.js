@@ -618,3 +618,12 @@ new MutationObserver(() => {
     purchaseGrade.dataset.stageTwoSynced = '1';
   }
 }).observe(document.body, { childList: true });
+function applyTypeStartDefaults(type) {
+  if ($('thickness')) $('thickness').value = '1.0';
+  if ($('productWidth')) $('productWidth').value = '1250';
+  if ($('productLength')) $('productLength').value = '2500';
+  if ($('quantity')) $('quantity').value = '1';
+  setType(type);
+}
+if (!localStorage.getItem('metal-cutter-values')) applyTypeStartDefaults(selectedType);
+document.querySelectorAll('.type-card').forEach(card => card.addEventListener('click', () => applyTypeStartDefaults(card.dataset.type)));
