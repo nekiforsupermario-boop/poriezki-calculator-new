@@ -31,7 +31,7 @@ const PRICE = {
     narrow: { '>30': { full: 4328, partial: 6667, open: 3460 }, '19-30': { full: 7397, partial: 11528, open: 5920 }, '12-18.9': { full: 10221, partial: 15948, open: 8250 }, '5-11.9': { full: 15131, partial: 22577, open: 11960 } }
   },
   rewind: { full: 4010, partial: 6165, open: 3460, narrowThin: { full: 4083, partial: 6372, open: 3460 }, minTons: 3 },
-  grinding: { rollMinTons: 3, sheetMinTons: 1, roll: [{ max: .6, full: 8901, partial: 11790, open: 8254 }, { max: .8, full: 7469, partial: 10071, open: 6822 }, { max: 1, full: 6545, partial: 8962, open: 5898 }, { max: 1.5, full: 5944, partial: 8242, open: 5297 }, { max: 3, full: 5482, partial: 7687, open: 4835 }, { max: 5, full: 4928, partial: 7022, open: 4281 }], sheet: 10900, rewind: { full: 3760, partial: 5772, open: 3183 } },
+  grinding: { rollMinTons: 3, sheetMinTons: 3, roll: [{ max: .6, full: 8901, partial: 11790, open: 8254 }, { max: .8, full: 7469, partial: 10071, open: 6822 }, { max: 1, full: 6545, partial: 8962, open: 5898 }, { max: 1.5, full: 5944, partial: 8242, open: 5297 }, { max: 3, full: 5482, partial: 7687, open: 4835 }, { max: 5, full: 4928, partial: 7022, open: 4281 }], sheet: 10900, rewind: { full: 3760, partial: 5772, open: 3183 } },
   film: { roll: 1600, sheet: [{ max: 1.5, price: 6400 }, { max: 5, price: 4400 }] }, density: 7.8
 };
 const COIL_WIDTHS = [1000, 1250, 1500];
@@ -49,7 +49,7 @@ function readStripOrders() { return [...document.querySelectorAll('.multi-strip-
 function stripLayoutScore(layout, orders) { const desired = new Map(); orders.forEach(order => desired.set(order.width, (desired.get(order.width) || 0) + order.quantity)); const desiredTotal = [...desired.values()].reduce((sum, value) => sum + value, 0); const used = layout.widths.reduce((sum, width) => sum + width, 0); return [...desired.entries()].reduce((score, [width, amount]) => score + Math.abs(amount / desiredTotal - layout.widths.filter(item => item === width).reduce((sum, item) => sum + item, 0) / used), 0); }
 function setType(type) { selectedType = type; addOpenModeField(); updateRewindWidthControl(); document.querySelectorAll('label').forEach(label => { if (label.firstChild) label.firstChild.textContent = label.firstChild.textContent.replace(/руб\/т(?!н)/, 'руб/тн'); }); document.querySelectorAll('.type-card').forEach(card => card.classList.toggle('selected', card.dataset.type === type)); $('paramsTitle').textContent = `Параметры ${typeNames[type]}`; document.querySelector('.length-field').hidden = type === 'strip' || type === 'rewind'; updateStripSizeControl(); updateUnits(); }
 function thicknessBand(t) { return t <= .6 ? 0 : t <= .8 ? 1 : t <= 1 ? 2 : t <= 1.5 ? 3 : t <= 3 ? 4 : t <= 5 ? 5 : -1; }
-function grindingPrice(type, thickness, volume, mode) { if (type === 'sheet') return charge(PRICE.grinding.sheet, volume, PRICE.grinding.sheetMinTons); const band = PRICE.grinding.roll[thicknessBand(thickness)]; return band ? charge(band[mode], volume, PRICE.grinding.rollMinTons, mode) : 0; }
+function grindingPrice(type, thickness, volume, mode) { const band = PRICE.grinding.roll[thicknessBand(thickness)]; return band ? band[mode] * Math.max(volume, PRICE.grinding.rollMinTons) / volume : 0; }
 function filmPrice(type, thickness, yieldRate) { if (getRadio('film') === 'none') return 0; const sides = getRadio('filmSides') === 'two' ? 2 : 1; const sourceWidthFactor = 1 / Math.max(yieldRate, 0.000001); if (type === 'strip' || type === 'rewind' || type === 'card') return PRICE.film.roll * sides * sourceWidthFactor; const band = PRICE.film.sheet.find(item => thickness <= item.max); return band ? band.price * sides * sourceWidthFactor : 0; }
 function stripBand(width) { return width > 30 ? '>30' : width >= 19 ? '19-30' : width >= 12 ? '12-18.9' : '5-11.9'; }
 function maxStrips(thickness, coilWidth) { if ((selectedType === 'strip' || selectedType === 'card') && thickness > 2) return 0; const band = thickness <= .6 ? 0 : thickness <= .8 ? 1 : thickness <= 1 ? 2 : thickness <= 1.2 ? 3 : thickness <= 1.5 ? 4 : 5; const limits = coilWidth < 500 ? [15, 15, 13, 13, 0, 7] : coilWidth < 1000 ? [16, 16, 13, 13, 0, 7] : [25, 21, 20, 17, 15, 10]; return limits[band] || 0; }
@@ -64,7 +64,7 @@ function serviceData(coilWidth, productWidth, thickness, volume, price, cardSize
   let grinding = 0; if (hasGrinding) { grinding = grindingPrice(selectedType, thickness, volume, openCutMode); operations.push({ name: '1. Шлифовка', mode: openCutMode === 'open' ? 'полностью открытый рулон' : openCutMode === 'full' ? 'полностью рулон' : 'частичный рулон', price: grinding }); if (getRadio('film') !== 'none' && getRadio('filmSides') === 'two') { const rewindPrice = PRICE.grinding.rewind[openCutMode]; operations.push({ name: 'Дополнительная перемотка на шлифовке', mode: 'вторая сторона', price: charge(rewindPrice, volume, selectedType === 'sheet' ? 1 : PRICE.grinding.rollMinTons, openCutMode) }); } }
   if (selectedType === 'strip' || selectedType === 'card') { const cutMode = hasGrinding ? postProcessingMode : openCutMode, tariffWidth = Math.max(...laneWidths); firstCut = longitudinalRate(tariffWidth, cutMode, coilWidth); if (!firstCut) return null; firstCut = charge(firstCut, volume, PRICE.longitudinal.minTons, cutMode); if ($('specialConditions')?.checked) firstCut += PRICE.longitudinal.special; if ($('furtherProcessing')?.checked) firstCut = Math.max(0, firstCut - PRICE.longitudinal.followUpDiscount); operations.push({ name: selectedType === 'card' ? (hasGrinding ? '2. Продольная резка в ленту' : '1. Продольная резка в ленту') : hasGrinding ? '2. Продольная резка в ленту' : '1. Продольная резка в ленту', mode: cutMode === 'open' ? 'открытый рулон до конца' : cutMode === 'full' ? 'полный рулон' : 'частичный рулон', price: firstCut }); }
   if (selectedType === 'rewind') { const tariff = thickness <= .4 ? PRICE.rewind.narrowThin : PRICE.rewind, rewindMode = hasGrinding ? postProcessingMode : openCutMode; firstCut = charge(tariff[rewindMode], volume, PRICE.rewind.minTons, rewindMode); if ($('specialConditions')?.checked) firstCut += PRICE.longitudinal.special; operations.push({ name: hasGrinding ? '2. Перемотка рулона' : '1. Перемотка рулона', mode: rewindMode === 'open' ? 'открытый рулон до конца' : rewindMode === 'full' ? 'полный рулон' : 'частичный рулон', price: firstCut }); }
-  let secondCut = 0; if (selectedType === 'sheet' || selectedType === 'card') { const cutMode = postProcessingMode; secondCut = charge(PRICE.crossCut[cutMode], volume, PRICE.crossCut.minTons, cutMode); if ($('specialConditions')?.checked) secondCut += PRICE.crossCut.special; if ($('noPallet')?.checked) secondCut = Math.max(0, secondCut - 500); operations.push({ name: selectedType === 'card' ? '3. Поперечная резка в карточки' : hasGrinding ? '2. Поперечная резка в лист' : '1. Поперечная резка в лист', mode: cutMode === 'open' ? 'открытый рулон до конца' : cutMode === 'full' ? 'полный рулон' : 'частичный рулон', price: secondCut }); } else if ($('noPallet')?.checked) firstCut = Math.max(0, firstCut - 500);
+  let secondCut = 0; if (selectedType === 'sheet' || selectedType === 'card') { const cutMode = hasGrinding ? postProcessingMode : openCutMode; secondCut = charge(PRICE.crossCut[cutMode], volume, PRICE.crossCut.minTons, cutMode); if ($('specialConditions')?.checked) secondCut += PRICE.crossCut.special; if ($('noPallet')?.checked) secondCut = Math.max(0, secondCut - 500); operations.push({ name: selectedType === 'card' ? '3. Поперечная резка в карточки' : hasGrinding ? '2. Поперечная резка в лист' : '1. Поперечная резка в лист', mode: cutMode === 'open' ? 'открытый рулон до конца' : cutMode === 'full' ? 'полный рулон' : 'частичный рулон', price: secondCut }); } else if ($('noPallet')?.checked) firstCut = Math.max(0, firstCut - 500);
   const film = filmPrice(selectedType, thickness, yieldRate); if (film) operations.push({ name: 'Плёнка', mode: getRadio('filmSides') === 'two' ? 'с двух сторон' : 'с одной стороны', price: film });
   const materialCost = Number($('materialCost').value), effectiveMaterial = materialCost / yieldRate, scrapCost = materialCost * (1 - yieldRate) / yieldRate, processing = operations.reduce((sum, item) => sum + item.price, 0);
   return { coilWidth, pieces, scrap, yieldRate, price, cardSize, effectiveMaterial, scrapCost, cutting: firstCut + secondCut, firstCut, secondCut, grinding, film, processing, total: price + processing + scrapCost, mode, operations };
@@ -187,7 +187,7 @@ document.querySelectorAll('.type-card').forEach(card => card.addEventListener('c
 setupDeliveryMonths(); try { const saved = JSON.parse(localStorage.getItem('metal-cutter-values') || 'null'); if (saved) { setType(saved.type || 'strip'); ['thickness', 'productWidth', 'productLength', 'quantity', 'materialCost', 'price'].forEach(id => { if (saved[id] !== undefined) $(id).value = saved[id]; }); document.querySelector(`input[name="stripSizeMode"][value="${saved.stripSizeMode || 'single'}"]`)?.click(); if (saved.stripSizeMode === 'multiple' && Array.isArray(saved.stripOrders)) { const rows = document.querySelector('.multi-strip-rows'); if (rows) { rows.innerHTML = ''; saved.stripOrders.forEach(order => addStripOrderRow(rows, order.width, order.quantity)); } } document.querySelector(`input[name="unit"][value="${saved.unit}"]`)?.click(); document.querySelector(`input[name="surface"][value="${saved.surface}"]`)?.click(); document.querySelector(`input[name="film"][value="${saved.film}"]`)?.click(); document.querySelector(`input[name="filmSides"][value="${saved.filmSides}"]`)?.click(); document.querySelector(`input[name="openMode"][value="${saved.openMode || 'partial'}"]`)?.click(); document.querySelector(`input[name="paymentTerms"][value="${saved.paymentTerms || 'prepayment'}"]`)?.click(); if (saved.deliveryMonth) $('deliveryMonth').value = saved.deliveryMonth; } } catch {} setType(selectedType); showStep(1);
 document.querySelectorAll('input[name="film"]').forEach(input => input.addEventListener('change', () => { if (input.checked && input.value === 'none') document.querySelector('input[name="filmSides"][value="one"]').checked = true; })); if (getRadio('film') === 'none') document.querySelector('input[name="filmSides"][value="one"]').checked = true;
 ['specialConditions', 'furtherProcessing', 'noPallet'].forEach(id => { if ($(id)) $(id).checked = false; });
-document.querySelector('input[name="unit"][value="tons"]').checked = true; document.querySelector('input[name="surface"][value="none"]').checked = true; document.querySelector('input[name="film"][value="none"]').checked = true; document.querySelector('input[name="filmSides"][value="one"]').checked = true; document.querySelector('input[name="openMode"][value="partial"]').checked = true;
+document.querySelector('input[name="unit"][value="tons"]').checked = true; document.querySelector('input[name="surface"][value="2b"]').checked = true; document.querySelector('input[name="film"][value="none"]').checked = true; document.querySelector('input[name="filmSides"][value="one"]').checked = true; document.querySelector('input[name="openMode"][value="partial"]').checked = true;
 document.querySelectorAll('label').forEach(label => { if (label.textContent.trim() === '4N') label.lastChild.textContent = ' Шлифовка'; });
 const STEEL_GRADES = ['AISI 201 J4', 'AISI 201', 'AISI 202', 'AISI 304L', 'AISI 304 Tp', 'AISI 304', '08Х18Н10', 'AISI 304 DDQ', 'AISI 309S', 'AISI 310S', 'AISI 316L', 'AISI 316Ti', '10Х17Н13М2Т', 'AISI 321', '12Х18Н10Т', '1.4541/321', 'AISI 409', 'AISI 410S', 'AISI 430', '430YD', 'AISI 439', 'AISI 444', 'AISI 904L', 'UNS N08810', 'DX54D', 'DX52D', 'DX51D', 'NM450', 'NM500', 'INCOLOY 825', 'ENAW 5083 Н111', 'ENAW 5086 Н111', 'Alloy28', 'ЛОМ', 'UNS N06600'];
 const CBR_FALLBACK = { USD: { rate: 85.6007, date: '29.08.2026' }, CNY: { rate: 12.7335, date: '29.08.2026' } };
@@ -202,7 +202,7 @@ function bindEditablePurchaseTotal() { const modal = $('purchaseModal'), result 
 function formatKeyRateDisplay() { const node = $('keyRate'); if (!node || node.dataset.formatted === '1') return; const format = () => { const value = Number(String(node.textContent || '').replace(/[^\d,.-]/g, '').replace(',', '.')); if (!Number.isFinite(value)) return; const formatted = `${decimal(value)}% годовых`; if (node.textContent !== formatted) node.textContent = formatted; if (typeof updateSaleBasedPurchaseSummary === 'function') updateSaleBasedPurchaseSummary(); }; node.dataset.formatted = '1'; format(); new MutationObserver(format).observe(node, { childList: true, characterData: true, subtree: true }); }
 function ensurePurchaseButton() { if ($('makeCalculationButton') || !$('editButton')) return; const button = document.createElement('button'); button.id = 'makeCalculationButton'; button.type = 'button'; button.className = 'button primary'; button.textContent = 'Сделать расчёт'; button.addEventListener('click', openPurchaseWindow); button.addEventListener('click', () => setTimeout(() => { ['purchasePrice', 'deliveryCost', 'defermentDays'].forEach(id => { if ($(id)?.value === '0') $(id).value = ''; }); enhancePurchaseWindow(); bindEditablePurchaseTotal(); document.querySelector('.purchase-source')?.remove(); formatKeyRateDisplay(); const refreshDelivery = () => { if ($('deliveryOutput') && !$('deliveryCost')?.value) $('deliveryOutput').textContent = '—'; }; $('deliveryCost')?.addEventListener('input', refreshDelivery); ['purchasePrice', 'salePrice', 'deliveryCost', 'defermentDays', 'keyRate'].forEach(id => $(id)?.addEventListener('input', updateSaleBasedPurchaseSummary)); $('purchaseCurrency')?.addEventListener('change', updateSaleBasedPurchaseSummary); const modal = $('purchaseModal'); modal?.addEventListener('click', event => { if (event.target === modal) event.stopImmediatePropagation(); }, true); updateSaleBasedPurchaseSummary(); refreshDelivery(); }, 0)); $('editButton').before(button); }
 async function exportCalculationToExcel(file) { if (!lastCalculation || !file) return; if (!window.ExcelJS) { alert('Не удалось загрузить модуль Excel. Проверьте подключение к интернету и повторите попытку.'); return; } const buffer = await file.arrayBuffer(), workbook = new ExcelJS.Workbook(); await workbook.xlsx.load(buffer); const sheet = workbook.getWorksheet('Расчет') || workbook.worksheets[0]; if (!sheet) throw new Error('В шаблоне не найден лист расчёта.'); const calculation = lastCalculation, monthText = $('deliveryMonth')?.selectedOptions[0]?.textContent || '', paymentText = calculation.paymentTerms === 'deferment' ? 'отсрочка' : 'предоплата', lineItems = calculation.stripSizeMode === 'multiple' ? calculation.stripOrders.map(order => ({ width: order.width, quantity: order.quantity, tons: quantityToTons(order.quantity, calculation.unit, calculation.thickness, order.width, calculation.length) })) : [{ width: Number($('productWidth').value), quantity: Number($('quantity').value), tons: calculation.volume }]; sheet.getCell('Q1').value = 'руб'; sheet.getCell('Q2').value = monthText; sheet.getCell('Q4').value = paymentText; lineItems.slice(0, 14).forEach((item, index) => { const row = sheet.getRow(8 + index); row.getCell(2).value = fullNomenclature(selectedType, calculation.thickness, item.width, calculation.length).toLowerCase(); row.getCell(4).value = calculation.thickness; row.getCell(5).value = item.width; row.getCell(6).value = selectedType === 'sheet' || selectedType === 'card' ? calculation.length : null; row.getCell(7).value = getRadio('surface') === '4n' ? 'N4' : ''; row.getCell(8).value = calculation.unit === 'pieces' ? item.quantity : null; row.getCell(9).value = item.tons; row.getCell(12).value = calculation.best.price; row.getCell(15).value = calculation.best.processing; row.getCell(16).value = 0; row.getCell(17).value = calculation.best.processing; }); sheet.getCell('B8').note = `Выгружено из калькулятора: ${resultNames[selectedType]}; поставка — ${monthText}; условия оплаты — ${paymentText}.`; if (workbook.calcProperties) { workbook.calcProperties.fullCalcOnLoad = true; workbook.calcProperties.forceFullCalc = true; } const output = await workbook.xlsx.writeBuffer(), blob = new Blob([output], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), link = document.createElement('a'); link.href = URL.createObjectURL(blob); link.download = `Расчет_${resultNames[selectedType].replace(/[^а-яёa-z0-9]+/gi, '_')}_${new Date().toISOString().slice(0, 10)}.xlsx`; link.click(); setTimeout(() => URL.revokeObjectURL(link.href), 1000); }
-function bindExcelExport() { const button = $('exportExcelButton'), input = $('excelTemplateInput'); if (!button || !input || button.dataset.bound) return; button.dataset.bound = '1'; button.disabled = true; }
+function bindExcelExport() { const button = $('exportExcelButton'); if (!button || button.dataset.bound) return; button.dataset.bound = '1'; button.addEventListener('click', openPurchaseWindow); }
 async function exportPurchaseCalculationToExcel(file) { if (!lastCalculation || !file) return; if (!window.ExcelJS) { alert('Не удалось загрузить модуль Excel. Проверьте подключение к интернету и повторите попытку.'); return; } const buffer = await file.arrayBuffer(), workbook = new ExcelJS.Workbook(), calculation = lastCalculation; await workbook.xlsx.load(buffer); const sheet = workbook.getWorksheet('Расчет') || workbook.worksheets[0]; if (!sheet) throw new Error('В шаблоне не найден лист расчёта.'); const grade = $('steelGrade')?.value || '', currency = $('purchaseCurrency')?.value || 'USD', purchasePrice = Number($('purchasePrice')?.value) || 0, rate = Number(String($('cbrRate')?.textContent || '').replace(/[^d,.-]/g, '').replace(',', '.')) || 0, salePrice = Number($('finalPrice')?.value) || Number($('salePrice')?.value) || calculation.best.total, delivery = Math.max(0, Number($('deliveryCost')?.value) || 0), days = Math.max(0, Number($('defermentDays')?.value) || 0), keyRate = Number(String($('keyRate')?.textContent || '').replace(/[^d,.-]/g, '').replace(',', '.')) || 0, monthText = $('modalDeliveryMonth')?.selectedOptions[0]?.textContent || '', paymentText = $('input[name="modalPaymentTerms"]:checked')?.value === 'deferment' ? 'отсрочка' : 'предоплата', lineItems = calculation.stripSizeMode === 'multiple' ? calculation.stripOrders.map(order => ({ width: order.width, quantity: order.quantity, tons: quantityToTons(order.quantity, calculation.unit, calculation.thickness, order.width, calculation.length) })) : [{ width: Number($('productWidth').value), quantity: Number($('quantity').value), tons: calculation.volume }]; sheet.getCell('Q1').value = 'руб'; sheet.getCell('Q2').value = monthText; sheet.getCell('Q4').value = paymentText; lineItems.slice(0, 14).forEach((item, index) => { const row = sheet.getRow(8 + index); row.getCell(2).value = fullNomenclature(selectedType, calculation.thickness, item.width, calculation.length).toLowerCase(); row.getCell(3).value = grade; row.getCell(4).value = calculation.thickness; row.getCell(5).value = item.width; row.getCell(6).value = selectedType === 'sheet' || selectedType === 'card' ? calculation.length : null; row.getCell(7).value = getRadio('surface') === '4n' ? 'N4' : ''; row.getCell(8).value = calculation.unit === 'pieces' ? item.quantity : null; row.getCell(9).value = item.tons; row.getCell(12).value = Number($('materialCost').value) || 0; row.getCell(15).value = calculation.best.processing; row.getCell(16).value = 0; row.getCell(17).value = calculation.best.processing; row.getCell(21).value = salePrice; }); const purchaseRow = sheet.getRow(45); purchaseRow.getCell(2).value = fullNomenclature(selectedType, calculation.thickness, lineItems[0].width, calculation.length).toLowerCase(); purchaseRow.getCell(3).value = grade; purchaseRow.getCell(4).value = calculation.thickness; purchaseRow.getCell(5).value = lineItems[0].width; purchaseRow.getCell(6).value = selectedType === 'sheet' || selectedType === 'card' ? calculation.length : null; purchaseRow.getCell(7).value = getRadio('surface') === '4n' ? 'N4' : ''; purchaseRow.getCell(9).value = calculation.volume; purchaseRow.getCell(10).value = rate; purchaseRow.getCell(11).value = purchasePrice; purchaseRow.getCell(21).value = salePrice; sheet.getCell('D24').value = delivery; sheet.getCell('F28').value = keyRate / 100; sheet.getCell('B25').value = paymentText === 'отсрочка' ? 'ДП на расч.счет' : 'предоплата'; sheet.getCell('B33').value = days; sheet.getCell('C33').value = days > 0 ? 1 : 0; sheet.getCell('D61').value = delivery; sheet.getCell('F65').value = keyRate / 100; sheet.getCell('B70').value = days; sheet.getCell('C70').value = days > 0 ? 1 : 0; sheet.getCell('B8').note = `Выгружено из расчёта закупки: ${grade}, ${currency}, ${purchasePrice} валют/тн, курс ${rate}, продажа ${salePrice} руб/тн.`; if (workbook.calcProperties) { workbook.calcProperties.fullCalcOnLoad = true; workbook.calcProperties.forceFullCalc = true; } const output = await workbook.xlsx.writeBuffer(), blob = new Blob([output], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), link = document.createElement('a'); link.href = URL.createObjectURL(blob); link.download = `Расчет_закупки_${new Date().toISOString().slice(0, 10)}.xlsx`; link.click(); setTimeout(() => URL.revokeObjectURL(link.href), 1000); }
  function bindPurchaseExcelExport() { const modal = $('purchaseModal'); if (!modal || modal.dataset.excelBound) return; modal.dataset.excelBound = '1'; const windowEl = modal.querySelector('.purchase-window'), result = modal.querySelector('.purchase-result'); if (!windowEl || !result) return; const meta = document.createElement('div'); meta.className = 'purchase-meta'; meta.innerHTML = '<fieldset><legend>Условия оплаты</legend><label class="radio"><input name="modalPaymentTerms" value="prepayment" type="radio" checked> Предоплата</label><label class="radio"><input name="modalPaymentTerms" value="deferment" type="radio"> Отсрочка</label></fieldset><label class="purchase-field">Месяц поставки<select id="modalDeliveryMonth"></select></label><label class="purchase-field layout-choice">Вариант раскроя<select id="layoutSelect"></select></label>'; result.before(meta); setupPurchaseMonths(); setupLayoutChoices(); const actions = modal.querySelector('.purchase-actions'); const button = document.createElement('button'); button.className = 'button primary'; button.type = 'button'; button.textContent = 'Выгрузить в Excel'; const input = document.createElement('input'); input.id = 'purchaseExcelTemplateInput'; input.type = 'file'; input.accept = '.xlsx'; input.hidden = true; actions?.prepend(button, input); const exportFile = async file => { try { await exportPurchaseCalculationToExcel(file); } catch (error) { console.error(error); const reason = error?.message ? `\n\nПричина: ${error.message}` : ''; alert(`Не удалось сформировать Excel из выбранного шаблона.${reason}`); } }; button.addEventListener('click', async () => { try { const response = await fetch('./расчет.xlsx', { cache: 'no-store' }); if (!response.ok) throw new Error(`Шаблон расчет.xlsx недоступен (${response.status})`); await exportFile({ name: 'расчет.xlsx', arrayBuffer: () => response.arrayBuffer() }); } catch (error) { input.click(); } }); input.addEventListener('change', async () => { await exportFile(input.files[0]); input.value = ''; }); }
 function setupPurchaseMonths() { const select = $('modalDeliveryMonth'); if (!select || select.options.length) return; const source = $('deliveryMonth'); [...(source?.options || [])].forEach(option => select.add(new Option(option.textContent, option.value))); if (source?.value) select.value = source.value; }
@@ -212,7 +212,7 @@ async function exportPurchaseCalculationToExcel(file) { if (!lastCalculation || 
   function clearTemplateInputs(sheet) { [8, 21, 45, 58].forEach((rowNumber, index) => { const end = index % 2 === 0 ? [21, 58][index / 2] : rowNumber; for (let row = rowNumber; row <= end; row += 1) for (let column = 2; column <= 21; column += 1) { const cell = sheet.getRow(row).getCell(column); if (!cell.formula && !cell.sharedFormula && !(cell.value && typeof cell.value === 'object' && cell.value.sharedFormula)) cell.value = null; } }); ['Q1', 'Q2', 'Q4', 'I24', 'J24', 'I25', 'J25', 'D24', 'F28', 'B25', 'B33', 'C33', 'D61', 'F65', 'B70', 'C70'].forEach(address => { const cell = sheet.getCell(address); if (!cell.formula && !cell.sharedFormula && !(cell.value && typeof cell.value === 'object' && cell.value.sharedFormula)) cell.value = null; }); }
   function columnNumberFromLetters(letters) { return [...letters.toUpperCase()].reduce((sum, char) => sum * 26 + char.charCodeAt(0) - 64, 0); }
   function isMergedNonTopLeft(sheet, rowNumber, columnNumber) { return (sheet.model?.merges || []).some(range => { const match = String(range).match(/^\$?([A-Z]+)\$?(\d+):\$?([A-Z]+)\$?(\d+)$/i); if (!match) return false; const startColumn = columnNumberFromLetters(match[1]), startRow = Number(match[2]), endColumn = columnNumberFromLetters(match[3]), endRow = Number(match[4]); return rowNumber >= startRow && rowNumber <= endRow && columnNumber >= startColumn && columnNumber <= endColumn && (rowNumber !== startRow || columnNumber !== startColumn); }); }
-  function copyFormulaRow(sheet, sourceRowNumber, targetRowNumber, inputColumns = []) { const source = sheet.getRow(sourceRowNumber), target = sheet.getRow(targetRowNumber); for (let column = 1; column <= 35; column += 1) { if (inputColumns.includes(column) || isMergedNonTopLeft(sheet, targetRowNumber, column)) continue; const sourceCell = source.getCell(column); const formula = sourceCell.formula || (sourceCell.sharedFormula ? sheet.getCell(sourceCell.sharedFormula).formula : ''); if (!formula) continue; const shifted = formula.replace(new RegExp(`(\\$?[A-Z]{1,3})(\\$?)${sourceRowNumber}\\b`, 'g'), (_, columnName, absoluteRow) => `${columnName}${absoluteRow ? '$' : ''}${targetRowNumber}`); target.getCell(column).value = { formula: shifted }; } }
+  function copyFormulaRow(sheet, sourceRowNumber, targetRowNumber, inputColumns = []) { const source = sheet.getRow(sourceRowNumber), target = sheet.getRow(targetRowNumber); for (let column = 1; column <= 35; column += 1) { if (inputColumns.includes(column) || isMergedNonTopLeft(sheet, targetRowNumber, column)) continue; const sourceCell = source.getCell(column), sharedMaster = sourceCell.sharedFormula, formula = sourceCell.formula || (sharedMaster ? sheet.getCell(sharedMaster).formula : ''); if (!formula) continue; const masterMatch = sharedMaster && String(sharedMaster).match(/\d+$/), formulaRowNumber = masterMatch ? Number(masterMatch[0]) : sourceRowNumber; const shifted = formula.replace(new RegExp(`(\\$?[A-Z]{1,3})(\\$?)${formulaRowNumber}\\b`, 'g'), (_, columnName, absoluteRow) => `${columnName}${absoluteRow ? '$' : ''}${targetRowNumber}`); target.getCell(column).value = { formula: shifted }; } }
  async function exportPurchaseCalculationToExcel(file) { if (!lastCalculation || !file) return; if (!window.ExcelJS) throw new Error('ExcelJS is not loaded'); const workbook = new ExcelJS.Workbook(); await workbook.xlsx.load(await file.arrayBuffer()); const sheet = workbook.getWorksheet('Расчет') || workbook.worksheets[0]; if (!sheet) throw new Error('Расчет sheet is missing'); const c = lastCalculation, selectedRow = c.rows?.[Number($('layoutSelect')?.value) || 0] || c.best, grade = $('steelGrade')?.value || '', currency = $('purchaseCurrency')?.value || 'USD', purchasePrice = Number($('purchasePrice')?.value) || 0, rate = Number(String($('cbrRate')?.textContent || '').replace(/[^0-9,.-]/g, '').replace(',', '.')) || 0, salePrice = Number($('finalPrice')?.value) || Number($('salePrice')?.value) || c.best.total, delivery = Number($('deliveryCost')?.value) || 0, days = Number($('defermentDays')?.value) || 0, keyRate = Number(String($('keyRate')?.textContent || '').replace(/[^0-9,.-]/g, '').replace(',', '.')) || 0, monthText = $('modalDeliveryMonth')?.selectedOptions[0]?.textContent || '', paymentText = $('input[name="modalPaymentTerms"]:checked')?.value === 'deferment' ? 'отсрочка' : 'предоплата', typeLabel = ({ strip: 'лента', card: 'карточка', sheet: 'лист', rewind: 'рулон' })[selectedType] || selectedType, lines = c.stripSizeMode === 'multiple' ? c.stripOrders.map(order => ({ width: order.width, quantity: Number(order.quantity) || 0, tons: quantityToTons(order.quantity, c.unit, c.thickness, order.width, c.length) })) : [{ width: Number($('productWidth')?.value) || selectedRow.width || 0, quantity: Number($('quantity')?.value) || 0, tons: c.volume }]; sheet.getCell('Q1').value = 'руб'; sheet.getCell('Q2').value = monthText; sheet.getCell('Q4').value = paymentText; const fill = (row, line, purchase = false, processing = selectedRow.processing) => { row.getCell(2).value = typeLabel; row.getCell(3).value = grade; row.getCell(4).value = c.thickness; row.getCell(5).value = line.width; row.getCell(6).value = selectedType === 'sheet' || selectedType === 'card' ? c.length : null; row.getCell(7).value = getRadio('surface') === '4n' ? 'N4' : ''; row.getCell(8).value = c.unit === 'pieces' ? line.quantity : null; row.getCell(9).value = line.tons; if (!purchase) { row.getCell(12).value = Number($('materialCost')?.value) || 0; row.getCell(15).value = processing; row.getCell(17).value = processing; row.getCell(21).value = salePrice; } else { row.getCell(10).value = rate; row.getCell(11).value = purchasePrice; } }; lines.slice(0, 14).forEach((line, index) => fill(sheet.getRow(8 + index), line)); const inputColumns = [2, 3, 4, 5, 6, 7, 8, 9, 10, 11]; lines.slice(0, 14).forEach((line, index) => { const rowNumber = 45 + index; fill(sheet.getRow(rowNumber), line, true); if (index > 0) copyFormulaRow(sheet, 45, rowNumber, inputColumns); }); sheet.getCell('D24').value = delivery; sheet.getCell('F28').value = keyRate / 100; sheet.getCell('B25').value = paymentText === 'отсрочка' ? 'ДП на расч.счет' : 'предоплата'; sheet.getCell('B33').value = days; sheet.getCell('C33').value = days > 0 ? 1 : 0; sheet.getCell('D61').value = delivery; sheet.getCell('B70').value = days; sheet.getCell('C70').value = days > 0 ? 1 : 0; sheet.getCell('B8').note = `Выгружено из расчёта закупки: ${typeLabel}, ${c.thickness} мм × ${lines[0]?.width || 0} мм; ${grade}, ${currency}, ${purchasePrice} валют/тн, курс ${rate}, продажа ${salePrice} руб/тн.`; repairBrokenSharedFormulas(workbook); if (workbook.calcProperties) { workbook.calcProperties.fullCalcOnLoad = true; workbook.calcProperties.forceFullCalc = true; } const output = await workbook.xlsx.writeBuffer(), link = document.createElement('a'); link.href = URL.createObjectURL(new Blob([output], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })); link.download = `Расчет_закупки_${new Date().toISOString().slice(0, 10)}.xlsx`; link.click(); setTimeout(() => URL.revokeObjectURL(link.href), 1000); }
  function actualCalculationForSelectedLayout(calculation) { const selected = calculation?.rows?.[Number($('layoutSelect')?.value) || 0] || calculation?.best; if (!selected) return calculation; const items = layoutWeightItems(selected, calculation.volume); if (!items.length) return { ...calculation, volume: calculation.volume * (selected.yieldRate || 1), actualVolume: calculation.volume * (selected.yieldRate || 1) }; const actualVolume = items.reduce((sum, item) => sum + item.tons, 0), orders = items.map(item => ({ width: item.width, quantity: item.tons })); return { ...calculation, volume: actualVolume, actualVolume, unit: 'tons', stripSizeMode: 'multiple', stripOrders: orders }; }
  const exportPurchaseCalculationToExcelBase = exportPurchaseCalculationToExcel;
@@ -220,6 +220,11 @@ async function exportPurchaseCalculationToExcel(file) { if (!lastCalculation || 
   function setupSurfaceChoices() { const fieldset = [...document.querySelectorAll('#paramsStep fieldset')].find(item => item.querySelector('legend')?.textContent.trim() === 'Поверхность'); if (!fieldset) return; const current = document.querySelector('input[name="surface"]:checked')?.value; fieldset.innerHTML = '<legend>Поверхность</legend><label class="radio"><input name="surface" value="2b" type="radio"> 2B</label><label class="radio"><input name="surface" value="1d" type="radio"> 1D</label><label class="radio"><input name="surface" value="ba" type="radio"> BA</label><label class="radio"><input name="surface" value="m2b" type="radio"> М2Б</label><label class="radio"><input name="surface" value="4n" type="radio"> Шлифовка</label>'; document.querySelector(`input[name="surface"][value="${['2b', '1d', 'ba', 'm2b', '4n'].includes(current) ? current : '2b'}"]`).checked = true; }
   function excelSurfaceLabel() { const surface = ({ '2b': '2B', '1d': '1D', ba: 'BA', m2b: 'М2Б', '4n': 'N4' })[getRadio('surface')] || '2B', film = getRadio('film'), sides = getRadio('filmSides') === 'two' ? 2 : 1; return film === 'none' ? surface : `${surface}${Array.from({ length: sides }, () => `+${film.toUpperCase()}`).join('')}`; }
   setupSurfaceChoices();
+  // Локальный режим должен запускаться независимо от загрузки ExcelJS.
+  setupBatchMode();
+  document.querySelectorAll('.type-card').forEach(card => card.addEventListener('click', () => setTimeout(updateBatchVisibility, 0)));
+  $('calculateButton').addEventListener('click', event => { if (!batchMode || !batchSupported()) return; event.stopImmediatePropagation(); if (calculateBatch()) showStep(3); }, true);
+
   const ExcelJSWorkbook = ExcelJS.Workbook;
   ExcelJS.Workbook = class extends ExcelJSWorkbook { constructor(...args) { super(...args); const writeBuffer = this.xlsx.writeBuffer.bind(this.xlsx); this.xlsx.writeBuffer = async (...writeArgs) => { const sheet = this.getWorksheet('Расчет') || this.worksheets[0], rate = Number(String($('cbrRate')?.textContent || '').replace(/[^0-9,.-]/g, '').replace(',', '.')) || 0; if (sheet) { const surface = excelSurfaceLabel(); sheet.getCell('Q1').value = 'руб'; sheet.getCell('I24').value = 1; sheet.getCell('J24').value = rate; [8, 21, 45, 58].forEach((rangeStart, index) => { const rangeEnd = index % 2 === 0 ? [21, 58][index / 2] : rangeStart; for (let row = rangeStart; row <= rangeEnd; row += 1) if (sheet.getRow(row).getCell(2).value) sheet.getRow(row).getCell(7).value = surface; }); } return writeBuffer(...writeArgs); }; } };
   function syncPurchasePaymentChoice() { const radios = [...document.querySelectorAll('input[name="modalPaymentTerms"]')]; if (!radios.length) return; const saved = lastCalculation?.paymentTerms || 'prepayment'; if (!radios.some(radio => radio.checked && radio.value === saved)) { const selected = radios.find(radio => radio.value === saved) || radios[0]; selected.checked = true; } radios.forEach(radio => { if (radio.dataset.bound === '1') return; radio.dataset.bound = '1'; radio.addEventListener('change', () => { if (lastCalculation) lastCalculation.paymentTerms = radio.value; }); }); }
@@ -237,6 +242,12 @@ $('calculateButton').addEventListener('click', () => { if (!$('error').hidden ||
   $('calculateButton').addEventListener('click', () => setTimeout(adjustStripResultsTable, 0));
   ensurePurchaseButton(); setupDeliveryMonths(); bindExcelExport();
 
+  // Инициализируем локальные позиции до необязательного Excel-модуля.
+  // Если CDN ExcelJS временно недоступен, основная форма всё равно работает.
+  setupBatchMode();
+  document.querySelectorAll('.type-card').forEach(card => card.addEventListener('click', () => setTimeout(updateBatchVisibility, 0)));
+  $('calculateButton').addEventListener('click', event => { if (!batchMode || !batchSupported()) return; event.stopImmediatePropagation(); if (calculateBatch()) showStep(3); }, true);
+
   // Финальная подготовка выгружаемого шаблона: рубли в шапке, формулы на всех
   // строках и прайс в добавленной пользователем панели справа.
   const ExcelJSWorkbookWithExportFixes = ExcelJS.Workbook;
@@ -249,20 +260,37 @@ $('calculateButton').addEventListener('click', () => { if (!$('error').hidden ||
         const sheet = workbook.getWorksheet('Расчет') || workbook.worksheets[0];
         if (sheet) {
           sheet.getCell('Q1').value = 'рубли';
+          const selectedCurrency = $('purchaseCurrency')?.value || 'USD';
+          const currencyFormat = selectedCurrency === 'CNY' ? '¥ #,##0.00' : '$ #,##0.00';
+          ['I24', ...Array.from({ length: 15 }, (_, index) => `K${8 + index}`), ...Array.from({ length: 15 }, (_, index) => `K${45 + index}`)].forEach(address => {
+            sheet.getCell(address).numFmt = currencyFormat;
+          });
           for (let row = 9; row <= 21; row += 1) copyFormulaRow(sheet, 8, row, [2, 3, 4, 5, 6, 7, 8, 9]);
           for (let row = 46; row <= 58; row += 1) copyFormulaRow(sheet, 45, row, [2, 3, 4, 5, 6, 7, 8, 9, 11]);
+          // В нижнем блоке переработка каждой строки берётся из соответствующей строки верхнего блока:
+          // O46=O9, O47=O10 и далее. Шаблон содержит shared-ссылку O8, поэтому задаём их явно.
+          for (let row = 46; row <= 58; row += 1) {
+            if (sheet.getRow(row).getCell(2).value) sheet.getCell(`O${row}`).value = { formula: `O${row - 37}` };
+          }
+          for (let row = 45; row <= 58; row += 1) {
+            if (sheet.getRow(row).getCell(2).value) sheet.getCell(`Q${row}`).value = { formula: `O${row}+N${row}` };
+          }
           let priceHeader;
           sheet.eachRow(row => row.eachCell(cell => {
              if (!priceHeader && /^прайс$/i.test(String(cell.value ?? '').trim())) priceHeader = cell;
           }));
-          const priceValue = Number($('price')?.value) || lastCalculation?.best?.price || 0;
           if (priceHeader) {
-            for (let row = 8; row <= 21; row += 1) if (sheet.getRow(row).getCell(2).value) sheet.getRow(row).getCell(priceHeader.col).value = priceValue;
-            for (let row = 45; row <= 58; row += 1) if (sheet.getRow(row).getCell(2).value) sheet.getRow(row).getCell(priceHeader.col).value = priceValue;
+            const setPrice = (rowNumber, itemIndex) => {
+              if (!sheet.getRow(rowNumber).getCell(2).value) return;
+              const itemPrice = lastCalculation?.batch ? Number(lastCalculation.batchItems[itemIndex]?.input?.price) || 0 : Number($('price')?.value) || lastCalculation?.best?.price || 0;
+              sheet.getRow(rowNumber).getCell(priceHeader.col).value = itemPrice;
+            };
+            for (let row = 8; row <= 21; row += 1) setPrice(row, row - 8);
+            for (let row = 45; row <= 58; row += 1) setPrice(row, row - 45);
           }
           else {
             sheet.getCell('AJ7').value = 'прайс';
-            sheet.getCell('AJ8').value = priceValue;
+            sheet.getCell('AJ8').value = Number($('price')?.value) || lastCalculation?.best?.price || 0;
           }
           for (let row = 45; row <= 58; row += 1) if (sheet.getRow(row).getCell(2).value) sheet.getRow(row).getCell(14).value = 2300;
         }
@@ -272,3 +300,318 @@ $('calculateButton').addEventListener('click', () => { if (!$('error').hidden ||
       };
     }
   };
+
+// Локальный режим сводной заявки для листов, карточек и рулонов.
+// Ленты продолжают использовать существующий режим нескольких типоразмеров.
+var batchMode = false;
+function batchSupported() { return selectedType === 'sheet' || selectedType === 'card' || selectedType === 'rewind'; }
+function batchRowMarkup(row = {}) {
+  const lengthField = selectedType === 'sheet' || selectedType === 'card'
+    ? `<label>Длина, мм<input class="batch-length" type="number" min="1" step="1" value="${row.length ?? 2500}" placeholder="Длина"></label>`
+    : '';
+  const grades = typeof STEEL_GRADES === 'undefined' ? ['AISI 201 J4'] : STEEL_GRADES;
+  const gradeOptions = grades.map(grade => `<option value="${grade}" ${grade === (row.grade || 'AISI 201 J4') ? 'selected' : ''}>${grade}</option>`).join('');
+  const surfaceOptions = [['2b', '2B'], ['1d', '1D'], ['ba', 'BA'], ['m2b', 'М2Б'], ['4n', 'Шлифовка']].map(([value, label]) => `<option value="${value}" ${value === (row.surface || '2b') ? 'selected' : ''}>${label}</option>`).join('');
+  return `<div class="batch-row">
+    <label>Марка<select class="batch-grade">${gradeOptions}</select></label>
+    <label>Толщина, мм<input class="batch-thickness" type="number" min="0.01" step="0.01" value="${row.thickness ?? 1.2}" placeholder="Толщина"></label>
+    <label>Ширина, мм<input class="batch-width" type="number" min="1" step="1" value="${row.width ?? 1250}" placeholder="Ширина"></label>
+    ${lengthField}
+    <label>Поверхность<select class="batch-surface">${surfaceOptions}</select></label>
+    <label>Количество<input class="batch-quantity" type="number" min="0.001" step="0.001" value="${row.quantity ?? 1}" placeholder="Вес / штуки"></label>
+    <label>Себестоимость, руб/т<input class="batch-material" type="text" inputmode="decimal" value="${row.materialCost ?? 172000}" placeholder="Себестоимость"></label>
+    <label>Прайс, руб/т<input class="batch-price" type="text" inputmode="decimal" value="${row.price ?? 172000}" placeholder="Прайс"></label>
+    <button class="button ghost batch-remove" type="button" aria-label="Удалить позицию">×</button>
+  </div>`;
+}
+function readBatchRows() {
+  return [...document.querySelectorAll('.batch-row')].map(row => ({
+    width: Number(row.querySelector('.batch-width')?.value),
+    length: Number(row.querySelector('.batch-length')?.value) || 0,
+    thickness: Number(row.querySelector('.batch-thickness')?.value),
+    quantity: Number(row.querySelector('.batch-quantity')?.value),
+    materialCost: numericInputValue(row.querySelector('.batch-material')?.value),
+    price: numericInputValue(row.querySelector('.batch-price')?.value),
+    grade: row.querySelector('.batch-grade')?.value || 'AISI 201 J4',
+    surface: row.querySelector('.batch-surface')?.value || '2b'
+  })).filter(row => [row.width, row.length, row.thickness, row.quantity, row.materialCost, row.price].every(value => Number.isFinite(value)) && row.width > 0 && row.thickness > 0 && row.quantity > 0 && row.materialCost >= 0 && row.price >= 0 && ((selectedType === 'sheet' || selectedType === 'card') ? row.length > 0 : true));
+}
+function updateBatchVisibility() {
+  const host = $('batchPositions'), toggle = $('batchModeToggle');
+  if (!host || !toggle) return;
+  const supported = batchSupported();
+  toggle.closest('label')?.toggleAttribute('hidden', !supported);
+  if (!supported && batchMode) { batchMode = false; toggle.checked = false; }
+  document.querySelectorAll('.field-grid > label').forEach(label => { label.hidden = batchMode && supported; });
+  const surfaceFieldset = [...document.querySelectorAll('#paramsStep fieldset')].find(fieldset => fieldset.querySelector('legend')?.textContent.trim() === 'Поверхность');
+  if (surfaceFieldset) surfaceFieldset.hidden = batchMode && supported;
+  host.hidden = !(batchMode && supported);
+  if (!(batchMode && supported)) return;
+  if (!host.querySelector('.batch-row')) {
+    host.innerHTML = `<div class="batch-heading"><strong>Позиции заявки</strong><span>У каждой позиции свои размеры, толщина, марка, поверхность, себестоимость и прайс. Одинаковые марка + толщина + ширина + поверхность автоматически объединяются в один рулон.</span></div><div class="batch-rows"></div><button class="button ghost batch-add" type="button">+ Добавить типоразмер</button>`;
+    const rows = host.querySelector('.batch-rows');
+    rows.insertAdjacentHTML('beforeend', batchRowMarkup({ grade: $('materialGrade')?.value || 'AISI 201 J4', width: Number($('productWidth')?.value) || 1250, length: Number($('productLength')?.value) || 2500, thickness: Number($('thickness')?.value) || 1.2, quantity: Number($('quantity')?.value) || 1, materialCost: Number($('materialCost')?.value) || 172000, price: Number($('price')?.value) || 172000 }));
+    rows.querySelectorAll('.batch-material,.batch-price').forEach(bindAmountFormatting);
+    host.querySelector('.batch-add').addEventListener('click', () => {
+      const source = rows.lastElementChild;
+      const value = selector => source?.querySelector(selector)?.value || '';
+      rows.insertAdjacentHTML('beforeend', batchRowMarkup({
+        grade: value('.batch-grade') || 'AISI 201 J4',
+        thickness: Number(value('.batch-thickness')) || 1.2,
+        width: Number(value('.batch-width')) || 1250,
+        length: Number(value('.batch-length')) || 2500,
+        surface: value('.batch-surface') || '2b',
+        quantity: Number(value('.batch-quantity')) || 1,
+        materialCost: numericInputValue(value('.batch-material')) || 172000,
+        price: numericInputValue(value('.batch-price')) || 172000
+      }));
+      rows.lastElementChild.querySelectorAll('.batch-material,.batch-price').forEach(bindAmountFormatting);
+    });
+    host.addEventListener('click', event => { if (event.target.closest('.batch-remove')) { const all = host.querySelectorAll('.batch-row'); if (all.length > 1) event.target.closest('.batch-row').remove(); } });
+  }
+}
+function setupBatchMode() {
+  const fieldGrid = document.querySelector('#paramsStep .field-grid');
+  if (!fieldGrid || $('batchModeToggle')) return;
+  const label = document.createElement('label');
+  label.className = 'batch-toggle radio';
+  label.innerHTML = '<input id="batchModeToggle" type="checkbox"> Несколько типоразмеров';
+  fieldGrid.before(label);
+  const host = document.createElement('div'); host.id = 'batchPositions'; host.className = 'batch-positions'; host.hidden = true; fieldGrid.after(host);
+  $('batchModeToggle').addEventListener('change', event => { batchMode = event.target.checked; updateBatchVisibility(); });
+  updateBatchVisibility();
+}
+function calculateBatch() {
+  const rows = readBatchRows(), error = $('error');
+  if (rows.length < 2) { error.textContent = 'Добавьте минимум две позиции и заполните все их параметры.'; error.hidden = false; return false; }
+  const groups = new Map(); rows.forEach((row, index) => { const key = `${row.grade}|${row.thickness}|${row.width}|${row.surface}`; if (!groups.has(key)) groups.set(key, { id: groups.size + 1, rows: [] }); groups.get(key).rows.push({ row, index }); });
+  const original = { thickness: $('thickness').value, productWidth: $('productWidth').value, productLength: $('productLength').value, quantity: $('quantity').value, materialCost: $('materialCost').value, price: $('price').value, surface: getRadio('surface') };
+  const items = [];
+  for (const row of rows) {
+    $('thickness').value = row.thickness; $('productWidth').value = row.width; $('productLength').value = row.length; $('quantity').value = row.quantity; $('materialCost').value = row.materialCost; $('price').value = row.price;
+    document.querySelector(`input[name="surface"][value="${row.surface}"]`)?.click();
+    calculate();
+    if (!$('error').hidden || !lastCalculation?.best) { error.textContent = `Позиция ${row.width} мм × ${row.thickness} мм не проходит по условиям прайса или заполнена неверно.`; error.hidden = false; Object.entries(original).forEach(([id, value]) => { $(id).value = value; }); return false; }
+    items.push({ input: row, orderVolume: lastCalculation.volume, groupKey: `${row.grade}|${row.thickness}|${row.width}|${row.surface}`, calculation: JSON.parse(JSON.stringify(lastCalculation)) });
+  }
+  const groupVolumes = new Map();
+  items.forEach(item => groupVolumes.set(item.groupKey, (groupVolumes.get(item.groupKey) || 0) + item.calculation.volume));
+  items.forEach(item => {
+    const groupVolume = groupVolumes.get(item.groupKey) || item.calculation.volume;
+    const { input } = item;
+    const quantity = getRadio('unit') === 'tons'
+      ? groupVolume
+      : getRadio('unit') === 'meters'
+        ? groupVolume / (input.thickness * input.width * PRICE.density * 0.0000078)
+        : groupVolume / (input.thickness * (input.width / 1000) * ((input.length || 1) / 1000) * PRICE.density / 1000);
+    $('thickness').value = input.thickness; $('productWidth').value = input.width; $('productLength').value = input.length; $('quantity').value = quantity; $('materialCost').value = input.materialCost; $('price').value = input.price;
+    document.querySelector(`input[name="surface"][value="${input.surface}"]`)?.click();
+    calculate();
+    item.calculation = JSON.parse(JSON.stringify(lastCalculation));
+    item.calculation.orderVolume = item.orderVolume;
+    item.calculation.groupVolume = groupVolume;
+  });
+  Object.entries(original).forEach(([id, value]) => { if (id === 'surface') document.querySelector(`input[name="surface"][value="${value}"]`)?.click(); else $(id).value = value; });
+  groups.forEach(group => {
+    const groupItems = items.filter(item => item.groupKey === `${group.rows[0].row.grade}|${group.rows[0].row.thickness}|${group.rows[0].row.width}|${group.rows[0].row.surface}`);
+    const commonWidths = groupItems.reduce((common, item) => { const widths = new Set((item.calculation.rows || []).map(row => row.coilWidth)); return common ? new Set([...common].filter(width => widths.has(width))) : widths; }, null);
+    const sharedCoilWidth = [...(commonWidths || [])].sort((a, b) => a - b)[0];
+    if (sharedCoilWidth) groupItems.forEach(item => { const sharedRow = item.calculation.rows.find(row => row.coilWidth === sharedCoilWidth); if (sharedRow) item.calculation.best = sharedRow; item.calculation.sharedCoilWidth = sharedCoilWidth; item.groupId = group.id; });
+  });
+  const totalVolume = items.reduce((sum, item) => sum + (item.calculation.orderVolume || item.calculation.volume), 0);
+  const weighted = key => totalVolume ? items.reduce((sum, item) => sum + (item.calculation.orderVolume || item.calculation.volume) * (Number(item.calculation.best?.[key]) || 0), 0) / totalVolume : 0;
+  lastCalculation = { batch: true, batchItems: items, groupCount: groups.size, volume: totalVolume, thickness: null, length: 0, unit: getRadio('unit'), paymentTerms: getRadio('paymentTerms'), stripOrders: [], stripSizeMode: 'batch', best: { total: weighted('total'), price: weighted('price'), processing: weighted('processing'), scrapCost: weighted('scrapCost'), operations: [] }, rows: [] };
+  renderBatchResults(items, totalVolume, weighted);
+  error.hidden = true;
+  return true;
+}
+function renderBatchResults(items, totalVolume, weighted) {
+  document.querySelector('.table-wrap').hidden = false;
+  document.querySelector('#resultsStep thead').innerHTML = '<tr><th>Позиция</th><th>Размер</th><th>Толщина</th><th>Вес</th><th>Себестоимость</th><th>Прайс</th><th>Итоговая цена</th></tr>';
+  $('resultsBody').innerHTML = items.map(({ input, calculation }) => `<tr class="best"><td><strong>${resultNames[selectedType]}</strong></td><td>${decimal(input.width)}${input.length ? ` × ${decimal(input.length)}` : ''} мм</td><td>${decimal(input.thickness)} мм</td><td>${decimal(calculation.volume)} т</td><td>${money(input.materialCost)} руб/т</td><td>${money(input.price)} руб/т</td><td><strong>${money(calculation.best.total)} руб/т</strong></td></tr>`).join('');
+  $('recommendation').innerHTML = `Сводный расчёт: <strong>${items.length} позиции</strong><span>Общий объём: ${decimal(totalVolume)} т · цены и себестоимость рассчитаны отдельно для каждой строки</span>`;
+  $('resultCaption').innerHTML = `${resultNames[selectedType]} · ${items.length} позиции · общий объём ${decimal(totalVolume)} т`;
+  $('priceBreakdown').innerHTML = `<h3>Итог по заявке: ${money(weighted('total'))} руб/т в среднем</h3><div class="price-lines">${items.map(({ input, calculation }) => `<div><span>${decimal(input.width)}${input.length ? `×${decimal(input.length)}` : ''} мм · ${decimal(input.thickness)} мм</span><strong>${money(calculation.best.total)} руб/т</strong></div>`).join('')}<div class="grand"><span>Средневзвешенная цена</span><strong>${money(weighted('total'))} руб/т</strong></div></div>`;
+  $('note').textContent = 'Локальный сводный режим: каждая позиция рассчитана с собственными толщиной, себестоимостью и прайсом.';
+}
+setupBatchMode();
+document.querySelectorAll('.type-card').forEach(card => card.addEventListener('click', () => setTimeout(updateBatchVisibility, 0)));
+$('calculateButton').addEventListener('click', event => { if (!batchMode || !batchSupported()) return; event.stopImmediatePropagation(); if (calculateBatch()) showStep(3); }, true);
+document.addEventListener('keydown', event => { if (event.key === 'Escape' && $('purchaseModal')) { event.preventDefault(); $('purchaseModal').remove(); } });
+
+async function exportBatchPurchaseCalculationToExcel(file) {
+  if (!lastCalculation?.batch || !file || !window.ExcelJS) return;
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.load(await file.arrayBuffer());
+  const sheet = workbook.getWorksheet('Расчет') || workbook.worksheets[0];
+  if (!sheet) throw new Error('В шаблоне не найден лист расчёта.');
+  const grade = $('steelGrade')?.value || '', purchasePrice = Number($('purchasePrice')?.value) || 0;
+  const groupPrices = Object.fromEntries([...document.querySelectorAll('.batch-purchase-price')].map(input => [input.dataset.group, numericInputValue(input.value)]));
+  const salePrices = [...document.querySelectorAll('.batch-sale-price')].map(input => numericInputValue(input.value));
+  const rate = Number(String($('cbrRate')?.textContent || '').replace(/[^0-9,.-]/g, '').replace(',', '.')) || 0;
+  const keyRate = Number(String($('keyRate')?.textContent || '').replace(/[^0-9,.-]/g, '').replace(',', '.')) || 0;
+  const delivery = Math.max(0, Number($('deliveryCost')?.value) || 0), days = Math.max(0, Number($('defermentDays')?.value) || 0);
+  const monthText = $('modalDeliveryMonth')?.selectedOptions[0]?.textContent || '', selectedPayment = $('input[name="modalPaymentTerms"]:checked')?.value || lastCalculation?.paymentTerms || 'prepayment', paymentText = selectedPayment === 'deferment' ? 'отсрочка' : 'предоплата';
+  const typeLabel = ({ card: 'карточка', sheet: 'лист', rewind: 'рулон' })[selectedType] || selectedType;
+  const items = lastCalculation.batchItems.slice(0, 14);
+  sheet.getCell('Q1').value = 'рубли'; sheet.getCell('Q2').value = monthText; sheet.getCell('Q4').value = paymentText;
+  items.forEach(({ input, calculation, groupKey }, index) => {
+    const fill = (row, purchase = false) => {
+      row.getCell(2).value = typeLabel; row.getCell(3).value = input.grade || grade; row.getCell(4).value = input.thickness; row.getCell(5).value = input.width;
+      row.getCell(6).value = selectedType === 'sheet' || selectedType === 'card' ? input.length : null; row.getCell(7).value = surfaceLabelFor(input.surface);
+      row.getCell(8).value = getRadio('unit') === 'pieces' ? input.quantity : null; row.getCell(9).value = calculation.orderVolume || calculation.volume;
+      if (purchase) { const itemGroupKey = groupKey || `${input.grade}|${input.thickness}|${input.width}|${input.surface}`; row.getCell(10).value = rate; row.getCell(11).value = groupPrices[itemGroupKey] ?? purchasePrice; }
+      else { row.getCell(12).value = input.materialCost; row.getCell(15).value = calculation.best.processing; row.getCell(17).value = calculation.best.processing; row.getCell(21).value = salePrices[index] || calculation.best.total; }
+    };
+    const top = sheet.getRow(8 + index), bottom = sheet.getRow(45 + index); fill(top); fill(bottom, true); if (index > 0) copyFormulaRow(sheet, 45, 45 + index, [2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
+  });
+  sheet.getCell('D24').value = delivery; sheet.getCell('F28').value = keyRate / 100; sheet.getCell('B25').value = paymentText === 'отсрочка' ? 'ДП на расч.счет' : 'предоплата'; sheet.getCell('B33').value = days; sheet.getCell('C33').value = days > 0 ? 1 : 0; sheet.getCell('D61').value = delivery; sheet.getCell('F65').value = keyRate / 100; sheet.getCell('B70').value = days; sheet.getCell('C70').value = days > 0 ? 1 : 0;
+  if (workbook.calcProperties) { workbook.calcProperties.fullCalcOnLoad = true; workbook.calcProperties.forceFullCalc = true; }
+  const output = await workbook.xlsx.writeBuffer(), link = document.createElement('a'); link.href = URL.createObjectURL(new Blob([output], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })); link.download = `Расчет_сводный_${new Date().toISOString().slice(0, 10)}.xlsx`; link.click(); setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+}
+const exportPurchaseCalculationBase3 = exportPurchaseCalculationToExcel;
+exportPurchaseCalculationToExcel = async function(file) { return lastCalculation?.batch ? exportBatchPurchaseCalculationToExcel(file) : exportPurchaseCalculationBase3(file); };
+
+// В сводной заявке каждый типоразмер показывает собственный набор раскроев.
+renderBatchResults = function(items, totalVolume, weighted) {
+  document.querySelector('.table-wrap').hidden = false;
+  document.querySelector('#resultsStep thead').innerHTML = '<tr><th>Исходный рулон</th><th>Раскрой</th><th>Фактический вес</th><th>Откройник</th><th>Итоговая цена</th></tr>';
+  $('resultsBody').innerHTML = items.map(({ input, calculation }, itemIndex) => {
+    const rows = (calculation.rows || []).slice(0, 5), best = calculation.best;
+    const rowsHtml = rows.map((row, index) => `<tr class="${index === 0 ? 'best' : ''}"><td><strong>${row.coilWidth} мм</strong>${index === 0 ? ' <em>лучший</em>' : ''}</td><td>${prettyLayout(row.cardSize) || row.pieces}</td><td>${actualWeightText(row, calculation.orderVolume || calculation.volume)}</td><td>${decimal(row.scrap)} мм / ${pct((1 - row.yieldRate) * 100)}</td><td><strong>${money(row.total)} руб/т</strong></td></tr>`).join('');
+    return `<tr class="batch-position-heading"><td colspan="5"><strong>${itemIndex + 1}. ${resultNames[selectedType]} · ${input.grade} · ${decimal(input.thickness)} мм · ${decimal(input.width)}${input.length ? `×${decimal(input.length)}` : ''} мм · ${surfaceLabelFor(input.surface)}</strong><span>Заказ: ${decimal(calculation.orderVolume || calculation.volume)} т · общий объём группы: ${decimal(calculation.groupVolume || calculation.volume)} т · прайс ${money(input.price)} руб/т · себестоимость ${money(input.materialCost)} руб/т</span></td></tr>${rowsHtml || `<tr><td colspan="5">Подходящий раскрой не найден</td></tr>`}`;
+  }).join('');
+  const groupLabel = lastCalculation.groupCount === 1 ? 'группа рулона' : (lastCalculation.groupCount < 5 ? 'группы рулонов' : 'групп рулонов');
+  $('recommendation').innerHTML = `Расчёт по ${items.length} позициям · ${lastCalculation.groupCount} ${groupLabel} <span>Одинаковые марка + толщина + ширина + поверхность объединены автоматически; разные группы считаются отдельно.</span>`;
+  $('resultCaption').innerHTML = `${resultNames[selectedType]} · ${items.length} типоразмера · общий объём ${decimal(totalVolume)} т`;
+  $('priceBreakdown').innerHTML = `<h3>Итоги по позициям</h3><div class="price-lines">${items.map(({ input, calculation }, index) => `<div><span>${index + 1}. ${resultNames[selectedType]} · ${input.grade} · ${decimal(input.thickness)} мм · ${decimal(input.width)}${input.length ? `×${decimal(input.length)}` : ''} мм · ${surfaceLabelFor(input.surface)}<small>Объём: ${decimal(calculation.orderVolume || calculation.volume)} т · прайс: ${money(input.price)} руб/т</small></span><strong>${money(calculation.best.total)} руб/т</strong></div>`).join('')}<div class="grand"><span>Средневзвешенная цена заявки</span><strong>${money(weighted('total'))} руб/т</strong></div></div>`;
+  $('note').textContent = 'Каждая позиция рассчитана отдельно. Для Excel можно выбрать раскрой для каждой строки в окне закупки.';
+};
+
+// В окне закупки выбирается раскрой отдельно для каждой позиции.
+setupLayoutChoices = function() {
+  const select = $('layoutSelect');
+  if (!select) return;
+  const layoutLabel = select.closest('.layout-choice');
+  if (lastCalculation?.batch) {
+    if (layoutLabel?.dataset.batchBound === '1') return;
+    layoutLabel.dataset.batchBound = '1';
+    layoutLabel.innerHTML = '<span>Варианты раскроя по позициям</span>';
+    lastCalculation.batchItems.forEach(({ input, calculation }, index) => {
+      const label = document.createElement('label'); label.className = 'batch-export-choice'; label.textContent = `${index + 1}. ${decimal(input.width)}${input.length ? `×${decimal(input.length)}` : ''} мм · ${decimal(input.thickness)} мм`;
+      const choice = document.createElement('select'); choice.className = 'batch-layout-select'; choice.dataset.index = String(index);
+      (calculation.rows || []).slice(0, 5).forEach((row, rowIndex) => choice.add(new Option(`${row.coilWidth} мм — ${prettyLayout(row.cardSize) || row.pieces} — ${money(row.total)} руб/т`, String(rowIndex))));
+      choice.value = '0'; label.appendChild(choice); layoutLabel.appendChild(label);
+    });
+    select.remove();
+    return;
+  }
+  if (select.options.length || !lastCalculation?.rows) return;
+  lastCalculation.rows.forEach((row, index) => select.add(new Option(`${row.coilWidth} мм — ${prettyLayout(row.cardSize) || row.pieces} — ${money(row.total)} руб/тн`, String(index))));
+  select.value = '0';
+};
+
+const exportBatchCalculationBase4 = exportBatchPurchaseCalculationToExcel;
+exportBatchPurchaseCalculationToExcel = async function(file) {
+  if (!lastCalculation?.batch) return exportBatchCalculationBase4(file);
+  const selectedRows = [...document.querySelectorAll('.batch-layout-select')].map(select => Number(select.value) || 0);
+  const originalItems = lastCalculation.batchItems;
+  const chosenItems = originalItems.map((item, index) => ({ ...item, calculation: { ...item.calculation, best: item.calculation.rows?.[selectedRows[index]] || item.calculation.best } }));
+  const saved = lastCalculation.batchItems; lastCalculation.batchItems = chosenItems;
+  try { return await exportBatchCalculationBase4(file); } finally { lastCalculation.batchItems = saved; }
+};
+function surfaceLabelFor(surface) { return ({ '2b': '2B', '1d': '1D', ba: 'BA', m2b: 'М2Б', '4n': 'N4' })[surface] || '2B'; }
+function numericInputValue(value) { return Number(String(value ?? '').replace(/\s/g, '').replace(',', '.')) || 0; }
+function formatAmountInput(input) { const value = numericInputValue(input.value); if (value) input.value = value.toLocaleString('ru-RU', { maximumFractionDigits: 2 }).replace(/\u00a0/g, ' '); }
+function bindAmountFormatting(input) { if (!input || input.dataset.amountBound === '1') return; input.type = 'text'; input.inputMode = 'decimal'; input.dataset.amountBound = '1'; input.addEventListener('focus', () => { input.value = String(input.value).replace(/\s/g, ''); }); input.addEventListener('blur', () => formatAmountInput(input)); formatAmountInput(input); }
+
+function setupBatchPurchaseWindow() {
+  if (!lastCalculation?.batch || $('batchPurchaseFields')) return;
+  const genericPurchase = $('purchasePrice')?.closest('label');
+  if (genericPurchase) genericPurchase.remove();
+  const genericGrade = $('steelGrade')?.closest('label');
+  if (genericGrade) genericGrade.remove();
+  const meta = document.querySelector('#purchaseModal .purchase-meta'), result = document.querySelector('#purchaseModal .purchase-result');
+  if (!meta || !result) return;
+  const groups = [...new Map(lastCalculation.batchItems.map(item => [item.groupKey, item])).entries()];
+  const block = document.createElement('div'); block.id = 'batchPurchaseFields'; block.className = 'batch-purchase-fields';
+  block.innerHTML = '<strong>Цена закупки по группам рулонов</strong><span>Одинаковые марка + толщина + ширина + поверхность используют одну цену закупки.</span>';
+  const currencyLabel = $('purchaseCurrency')?.closest('label'), rateBox = $('cbrRate')?.closest('.purchase-rate');
+  if (currencyLabel) block.appendChild(currencyLabel);
+  if (rateBox) block.appendChild(rateBox);
+  groups.forEach(([key, item], index) => { const label = document.createElement('label'); label.className = 'purchase-field'; label.innerHTML = `Группа ${index + 1}: ${item.input.grade} · ${decimal(item.input.width)} мм · ${decimal(item.input.thickness)} мм · ${surfaceLabelFor(item.input.surface)}<input class="batch-purchase-price" data-group="${key}" type="text" inputmode="decimal" min="0" placeholder="Цена закупки, валют/т" value="">`; block.appendChild(label); });
+  meta.before(block);
+  const sale = $('salePrice')?.closest('label'); if (sale) sale.hidden = true;
+  const final = $('finalPrice')?.closest('label'); if (final) final.hidden = true;
+  const sales = document.createElement('div'); sales.id = 'batchSaleFields'; sales.className = 'batch-sale-fields'; sales.innerHTML = '<strong>Цена продажи по позициям</strong>';
+  lastCalculation.batchItems.forEach(({ input, calculation }, index) => { const label = document.createElement('label'); label.className = 'purchase-field'; label.innerHTML = `${index + 1}. ${decimal(input.width)}${input.length ? `×${decimal(input.length)}` : ''} мм · ${decimal(input.thickness)} мм · ${input.grade}<input class="batch-sale-price" data-index="${index}" type="text" inputmode="decimal" value="${Math.round(calculation.best.total)}">`; sales.appendChild(label); });
+  meta.after(sales);
+  [...block.querySelectorAll('.batch-purchase-price'), ...sales.querySelectorAll('.batch-sale-price')].forEach(bindAmountFormatting);
+  const summary = document.createElement('div'); summary.id = 'batchPurchaseSummary'; summary.className = 'batch-purchase-summary'; sales.after(summary); result.remove();
+  $('salePriceOutput')?.closest('div')?.setAttribute('hidden', 'hidden');
+  const renderBatchSummary = (rate, keyRate, delivery, days) => {
+    const groupPriceInputs = new Map([...block.querySelectorAll('.batch-purchase-price')].map(input => [input.dataset.group, input]));
+    summary.innerHTML = lastCalculation.batchItems.map(({ input, calculation, groupKey }, index) => {
+      const groupPrice = numericInputValue(groupPriceInputs.get(groupKey)?.value);
+      const purchaseRub = groupPrice * rate;
+      const volume = input.orderVolume || calculation.orderVolume || calculation.volume || 0;
+      const processing = Number(calculation.best?.processing) || 0;
+      const scrapCost = purchaseRub * (1 - (calculation.best?.yieldRate || 1)) / Math.max(calculation.best?.yieldRate || 1, 0.000001);
+      const salePrice = numericInputValue(sales.querySelector(`[data-index="${index}"]`)?.value);
+      const deferment = (salePrice + delivery) * keyRate / 100 * days / 365;
+      const finalPrice = salePrice + delivery + deferment;
+      return `<section class="batch-price-card"><h4>${index + 1}. ${resultNames[selectedType]} · ${input.grade} · ${decimal(input.thickness)} мм · ${decimal(input.width)}${input.length ? `×${input.length}` : ''} мм · ${surfaceLabelFor(input.surface)}</h4><p>объём ${decimal(volume)} т</p><div><span>Закупка</span><strong>${purchaseRub ? money(purchaseRub) : '—'} руб/т</strong></div><div><span>Переработка</span><strong>${money(processing)} руб/т</strong></div><div><span>Доставка</span><strong>${money(delivery)} руб/т</strong></div><div><span>Отсрочка</span><strong>${money(deferment)} руб/т</strong></div><div><span>Цена продажи</span><strong>${salePrice ? money(salePrice) : '—'} руб/т</strong></div><div class="batch-price-total"><span>Итоговая цена</span><strong>${salePrice ? money(finalPrice) : '—'} руб/т</strong></div></section>`;
+    }).join('');
+  };
+  const refreshBatchSummary = () => {
+    const rate = Number(String($('cbrRate')?.textContent || '').replace(/[^0-9,.-]/g, '').replace(',', '.')) || 0;
+    const keyRate = Number(String($('keyRate')?.textContent || '').replace(/[^0-9,.-]/g, '').replace(',', '.')) || 0;
+    const days = Math.max(0, Number($('defermentDays')?.value) || 0), delivery = Math.max(0, Number($('deliveryCost')?.value) || 0);
+    const groupPriceInputs = new Map([...block.querySelectorAll('.batch-purchase-price')].map(input => [input.dataset.group, input]));
+    const groupVolumes = new Map(); lastCalculation.batchItems.forEach(item => groupVolumes.set(item.groupKey, (groupVolumes.get(item.groupKey) || 0) + (item.orderVolume || item.calculation.orderVolume || item.calculation.volume)));
+    const totalVolume = [...groupVolumes.values()].reduce((sum, value) => sum + value, 0);
+    const purchaseRub = totalVolume ? groups.reduce((sum, [key]) => sum + numericInputValue(groupPriceInputs.get(key)?.value) * rate * (groupVolumes.get(key) || 0), 0) / totalVolume : 0;
+    const deferment = purchaseRub * keyRate / 100 * days / 365;
+    if ($('purchaseRub')) $('purchaseRub').textContent = purchaseRub ? `${money(purchaseRub)} руб/тн` : '—';
+    if ($('defermentCost')) $('defermentCost').textContent = `${money(deferment)} руб/тн`;
+    if ($('deliveryOutput')) $('deliveryOutput').textContent = `${money(delivery)} руб/тн`;
+    if ($('purchaseTotal')) $('purchaseTotal').textContent = purchaseRub ? `${money(purchaseRub + delivery + deferment)} руб/тн` : '—';
+    [...sales.querySelectorAll('.batch-sale-price')].forEach((input, index) => { const target = summary.children[index]?.querySelector('strong'); if (target) target.textContent = `${money(numericInputValue(input.value))} руб/т`; });
+    renderBatchSummary(rate, keyRate, delivery, days);
+  };
+  [...block.querySelectorAll('input'), ...sales.querySelectorAll('input'), $('deliveryCost'), $('defermentDays'), $('purchaseCurrency')].filter(Boolean).forEach(input => input.addEventListener(input.tagName === 'SELECT' ? 'change' : 'input', refreshBatchSummary));
+  $('cbrRate')?.closest('.purchase-rate')?.addEventListener('DOMSubtreeModified', refreshBatchSummary);
+  const ratesObserver = new MutationObserver(refreshBatchSummary);
+  [$('cbrRate'), $('keyRate')].filter(Boolean).forEach(node => ratesObserver.observe(node, { childList: true, characterData: true, subtree: true }));
+  [...document.querySelectorAll('.batch-layout-select')].forEach(select => select.addEventListener('change', () => {
+    const index = Number(select.dataset.index), item = lastCalculation.batchItems[index], row = item?.calculation?.rows?.[Number(select.value)];
+    if (!item || !row) return;
+    item.calculation.best = row;
+    const saleInput = sales.querySelector(`[data-index="${index}"]`);
+    if (saleInput) { saleInput.value = Math.round(row.total || 0); formatAmountInput(saleInput); saleInput.dispatchEvent(new Event('input', { bubbles: true })); }
+    refreshBatchSummary();
+  }));
+  refreshBatchSummary();
+}
+const bindPurchaseExcelExportBase5 = bindPurchaseExcelExport;
+bindPurchaseExcelExport = function() { bindPurchaseExcelExportBase5(); if (lastCalculation?.batch) { setTimeout(setupBatchPurchaseWindow, 0); setTimeout(setupBatchPurchaseWindow, 80); } };
+
+// Марка стали выбирается на втором этапе и используется как значение по умолчанию в окне закупки.
+const materialGrade = $('materialGrade');
+if (materialGrade && typeof STEEL_GRADES !== 'undefined') {
+  materialGrade.innerHTML = STEEL_GRADES.map(grade => `<option value="${grade}">${grade}</option>`).join('');
+}
+new MutationObserver(() => {
+  const mainGrade = $('materialGrade'), purchaseGrade = $('steelGrade');
+  if (lastCalculation?.batch && $('purchaseModal')) {
+    const title = $('purchaseTitle');
+    if (title && title.dataset.batchTitle !== '1') { title.replaceChildren(document.createTextNode('Расчёт цены')); title.dataset.batchTitle = '1'; }
+    purchaseGrade?.closest('label')?.setAttribute('hidden', 'hidden');
+    $('purchasePrice')?.closest('label')?.setAttribute('hidden', 'hidden');
+    $('salePrice')?.closest('label')?.setAttribute('hidden', 'hidden');
+  }
+  if (mainGrade && purchaseGrade && !purchaseGrade.dataset.stageTwoSynced) {
+    purchaseGrade.value = mainGrade.value;
+    purchaseGrade.dataset.stageTwoSynced = '1';
+  }
+}).observe(document.body, { childList: true });
