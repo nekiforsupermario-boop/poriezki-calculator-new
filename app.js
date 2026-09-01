@@ -275,6 +275,9 @@ $('calculateButton').addEventListener('click', () => { if (!$('error').hidden ||
           for (let row = 45; row <= 58; row += 1) {
             if (sheet.getRow(row).getCell(2).value) sheet.getCell(`Q${row}`).value = { formula: `O${row}+N${row}` };
           }
+          for (let row = 45; row <= 58; row += 1) {
+            if (sheet.getRow(row).getCell(2).value) sheet.getCell(`U${row}`).value = { formula: `U${row - 37}` };
+          }
           let priceHeader;
           sheet.eachRow(row => row.eachCell(cell => {
              if (!priceHeader && /^прайс$/i.test(String(cell.value ?? '').trim())) priceHeader = cell;
