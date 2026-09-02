@@ -10,6 +10,20 @@
   form?.addEventListener('submit', async event => { event.preventDefault(); if (await digest(input.value) === passwordHash) { sessionStorage.setItem('poriezki-unlocked', '1'); unlock(); } else { error.hidden = false; input.select(); } });
 })();
 const $ = id => document.getElementById(id);
+function showCalculationError(message) {
+  const old = document.querySelector('.calculation-error-modal');
+  old?.remove();
+  const modal = document.createElement('div');
+  modal.className = 'calculation-error-modal';
+  modal.innerHTML = '<div class="calculation-error-window" role="dialog" aria-modal="true" aria-labelledby="calculationErrorTitle"><h2 id="calculationErrorTitle">Не удалось выполнить расчёт</h2><p></p><button class="button primary" type="button">Понятно</button></div>';
+  modal.querySelector('p').textContent = message;
+  const close = () => modal.remove();
+  modal.querySelector('button').addEventListener('click', close);
+  modal.addEventListener('click', event => { if (event.target === modal) close(); });
+  document.body.appendChild(modal);
+}
+const calculationErrorElement = $('error');
+if (calculationErrorElement) new MutationObserver(() => { if (!calculationErrorElement.hidden) showCalculationError(calculationErrorElement.textContent || 'Проверьте заполнение параметров.'); }).observe(calculationErrorElement, { attributes: true, attributeFilter: ['hidden'], childList: true, characterData: true, subtree: true });
 const money = value => new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 0 }).format(Math.round(value));
 const decimal = value => new Intl.NumberFormat('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(Number(String(value).replace(',', '.')));
 const rateDecimal = value => new Intl.NumberFormat('ru-RU', { minimumFractionDigits: 4, maximumFractionDigits: 4 }).format(Number(String(value).replace(',', '.')));
@@ -35,7 +49,7 @@ const PRICE = {
   film: { pePerMeter: 60, lpePerMeter: 80 }, density: 7.8
 };
 const COIL_WIDTHS = [1000, 1250, 1500];
-const getRadio = name => document.querySelector(`input[name="${name}"]:checked`).value;
+const getRadio = name => document.querySelector(`input[name="${name}"]:checked`)?.value || document.querySelector(`[name="${name}"]`)?.value || '';
 const charge = (rate, volume, minTons, mode) => rate * (mode === 'open' ? volume : Math.max(volume, minTons)) / volume;
 
 function showStep(step) { $('typeStep').hidden = step !== 1; $('paramsStep').hidden = step !== 2; $('resultsStep').hidden = step !== 3; ['step1Nav', 'step2Nav', 'step3Nav'].forEach((id, i) => $(id).classList.toggle('active', i + 1 === step)); }
@@ -165,6 +179,7 @@ function cutPlanHtml(row, length = 0) {
 }
 
 function calculate() {
+  ['materialCost', 'price'].forEach(id => { const input = $(id); if (input) input.value = String(input.value || '').replace(/\s/g, ''); });
   const thickness = Number($('thickness').value), productWidthRaw = $('productWidth').value.trim(), stripSizeMode = selectedType === 'strip' ? (getRadio('stripSizeMode') || 'single') : 'single', stripOrders = selectedType === 'strip' && stripSizeMode === 'multiple' ? readStripOrders() : [], productWidths = selectedType === 'strip' && stripSizeMode === 'multiple' ? [...new Set(stripOrders.map(order => order.width))] : [Number(productWidthRaw)], productWidth = productWidths[0], length = Number($('productLength').value) || 0, quantity = Number($('quantity').value), materialCost = Number($('materialCost').value), price = Number($('price').value), unit = getRadio('unit'), error = $('error'), film = getRadio('film'), filmSides = getRadio('filmSides'), validStripOrders = stripSizeMode !== 'multiple' || (stripOrders.length >= 2 && stripOrders.every(order => order.width > 0 && order.quantity > 0));
   if (![thickness, productWidth, materialCost, price].every(Number.isFinite) || thickness <= 0 || productWidth <= 0 || (!validStripOrders) || (stripSizeMode === 'single' && (!Number.isFinite(quantity) || quantity <= 0)) || materialCost < 0 || price < 0 || (selectedType !== 'strip' && selectedType !== 'rewind' && length <= 0) || (filmSides === 'two' && (film === 'none' || thickness > 2))) { error.textContent = filmSides === 'two' && film === 'none' ? 'Для двухсторонней плёнки выберите PE или LPE.' : filmSides === 'two' && thickness > 2 ? 'Плёнка с двух сторон доступна только до толщины 2,0 мм.' : !validStripOrders ? 'Добавьте минимум два типоразмера и укажите ширину с нужным весом или метражом.' : 'Проверьте заполнение параметров.'; error.hidden = false; return; }
   const volume = stripSizeMode === 'multiple' ? stripOrders.reduce((sum, order) => sum + quantityToTons(order.quantity, unit, thickness, order.width, length), 0) : quantityToTons(quantity, unit, thickness, productWidth, length); if (!Number.isFinite(volume) || volume <= 0) { error.textContent = 'Не удалось перевести количество в тонны. Проверьте размеры.'; error.hidden = false; return; } error.hidden = true;
@@ -223,11 +238,12 @@ async function exportPurchaseCalculationToExcel(file) { if (!lastCalculation || 
   // Локальный режим должен запускаться независимо от загрузки ExcelJS.
   setupBatchMode();
   document.querySelectorAll('.type-card').forEach(card => card.addEventListener('click', () => setTimeout(updateBatchVisibility, 0)));
-  $('calculateButton').addEventListener('click', event => { if (!batchMode || !batchSupported()) return; event.stopImmediatePropagation(); if (calculateBatch()) showStep(3); }, true);
+  $('calculateButton').addEventListener('click', event => { if (!batchMode || !document.querySelector('#batchModeToggle')?.checked || !batchSupported()) return; event.stopImmediatePropagation(); if (calculateBatch()) showStep(3); }, true);
 
   const ExcelJSWorkbook = ExcelJS.Workbook;
   ExcelJS.Workbook = class extends ExcelJSWorkbook { constructor(...args) { super(...args); const writeBuffer = this.xlsx.writeBuffer.bind(this.xlsx); this.xlsx.writeBuffer = async (...writeArgs) => { const sheet = this.getWorksheet('Расчет') || this.worksheets[0], rate = Number(String($('cbrRate')?.textContent || '').replace(/[^0-9,.-]/g, '').replace(',', '.')) || 0; if (sheet) { const surface = excelSurfaceLabel(); sheet.getCell('Q1').value = 'руб'; sheet.getCell('I24').value = 1; sheet.getCell('J24').value = rate; [8, 21, 45, 58].forEach((rangeStart, index) => { const rangeEnd = index % 2 === 0 ? [21, 58][index / 2] : rangeStart; for (let row = rangeStart; row <= rangeEnd; row += 1) if (sheet.getRow(row).getCell(2).value) sheet.getRow(row).getCell(7).value = surface; }); } return writeBuffer(...writeArgs); }; } };
-  function syncPurchasePaymentChoice() { const radios = [...document.querySelectorAll('input[name="modalPaymentTerms"]')]; if (!radios.length) return; const saved = lastCalculation?.paymentTerms || 'prepayment'; if (!radios.some(radio => radio.checked && radio.value === saved)) { const selected = radios.find(radio => radio.value === saved) || radios[0]; selected.checked = true; } radios.forEach(radio => { if (radio.dataset.bound === '1') return; radio.dataset.bound = '1'; radio.addEventListener('change', () => { if (lastCalculation) lastCalculation.paymentTerms = radio.value; }); }); }
+  function syncPurchasePaymentChoice() { document.querySelectorAll('input[name="modalPaymentTerms"]').forEach(input => input.closest('fieldset')?.remove()); const modal = $('purchaseModal'); if (!modal) return; modal.querySelector('#salePrice')?.closest('label')?.setAttribute('hidden', 'hidden'); modal.querySelector('#salePriceOutput')?.closest('div')?.setAttribute('hidden', 'hidden'); let input = modal.querySelector('input[name="modalPaymentTerms"]'); if (!input) { input = document.createElement('input'); input.type = 'radio'; input.name = 'modalPaymentTerms'; input.hidden = true; modal.appendChild(input); } const sync = () => { input.value = Number($('defermentDays')?.value) > 0 ? 'deferment' : 'prepayment'; input.checked = true; }; $('defermentDays')?.addEventListener('input', sync); sync(); }
+  document.addEventListener('click', event => { if (!event.target.closest('#purchaseModal .button.primary')) return; const input = document.querySelector('input[name="modalPaymentTerms"]'); if (input) { input.value = Number($('defermentDays')?.value) > 0 ? 'deferment' : 'prepayment'; input.checked = true; } }, true);
   // Каждый экспорт загружает свежий исходный шаблон. Не очищаем его после загрузки:
   // это сохраняет нули, оформление и формулы, которые уже находятся в шаблоне.
   new MutationObserver(() => { if ($('purchaseModal')) { bindPurchaseExcelExport(); syncPurchasePaymentChoice(); } }).observe(document.body, { childList: true });
@@ -246,7 +262,7 @@ $('calculateButton').addEventListener('click', () => { if (!$('error').hidden ||
   // Если CDN ExcelJS временно недоступен, основная форма всё равно работает.
   setupBatchMode();
   document.querySelectorAll('.type-card').forEach(card => card.addEventListener('click', () => setTimeout(updateBatchVisibility, 0)));
-  $('calculateButton').addEventListener('click', event => { if (!batchMode || !batchSupported()) return; event.stopImmediatePropagation(); if (calculateBatch()) showStep(3); }, true);
+  $('calculateButton').addEventListener('click', event => { if (!batchMode || !document.querySelector('#batchModeToggle')?.checked || !batchSupported()) return; event.stopImmediatePropagation(); if (calculateBatch()) showStep(3); }, true);
 
   // Финальная подготовка выгружаемого шаблона: рубли в шапке, формулы на всех
   // строках и прайс в добавленной пользователем панели справа.
@@ -341,6 +357,7 @@ function readBatchRows() {
 }
 function updateBatchVisibility() {
   const host = $('batchPositions'), toggle = $('batchModeToggle');
+  if (toggle) batchMode = toggle.checked;
   if (!host || !toggle) return;
   const supported = batchSupported();
   toggle.closest('label')?.toggleAttribute('hidden', !supported);
@@ -353,7 +370,7 @@ function updateBatchVisibility() {
   if (!host.querySelector('.batch-row')) {
     host.innerHTML = `<div class="batch-heading"><strong>Позиции заявки</strong><span>У каждой позиции свои размеры, толщина, марка, поверхность, себестоимость и прайс. Одинаковые марка + толщина + ширина + поверхность автоматически объединяются в один рулон.</span></div><div class="batch-rows"></div><button class="button ghost batch-add" type="button">+ Добавить типоразмер</button>`;
     const rows = host.querySelector('.batch-rows');
-    rows.insertAdjacentHTML('beforeend', batchRowMarkup({ grade: $('materialGrade')?.value || 'AISI 201 J4', width: Number($('productWidth')?.value) || 1250, length: Number($('productLength')?.value) || 2500, thickness: Number($('thickness')?.value) || 1.2, quantity: Number($('quantity')?.value) || 1, materialCost: Number($('materialCost')?.value) || 0, price: Number($('price')?.value) || 0 }));
+    rows.insertAdjacentHTML('beforeend', batchRowMarkup({ grade: $('materialGrade')?.value || 'AISI 201 J4', width: Number($('productWidth')?.value) || 1250, length: Number($('productLength')?.value) || 2500, thickness: Number($('thickness')?.value) || 1.2, quantity: Number($('quantity')?.value) || 1, materialCost: 0, price: 0 }));
     rows.querySelectorAll('.batch-material,.batch-price').forEach(bindAmountFormatting);
     host.querySelector('.batch-add').addEventListener('click', () => {
       const source = rows.lastElementChild;
@@ -365,8 +382,8 @@ function updateBatchVisibility() {
         length: Number(value('.batch-length')) || 2500,
         surface: value('.batch-surface') || '2b',
         quantity: Number(value('.batch-quantity')) || 1,
-        materialCost: numericInputValue(value('.batch-material')) || 172000,
-        price: numericInputValue(value('.batch-price')) || 172000
+        materialCost: 0,
+        price: 0
       }));
       rows.lastElementChild.querySelectorAll('.batch-material,.batch-price').forEach(bindAmountFormatting);
     });
@@ -434,12 +451,13 @@ function renderBatchResults(items, totalVolume, weighted) {
   $('resultsBody').innerHTML = items.map(({ input, calculation }) => `<tr class="best"><td><strong>${resultNames[selectedType]}</strong></td><td>${decimal(input.width)}${input.length ? ` × ${decimal(input.length)}` : ''} мм</td><td>${decimal(input.thickness)} мм</td><td>${decimal(calculation.volume)} т</td><td>${money(input.materialCost)} руб/т</td><td>${money(input.price)} руб/т</td><td><strong>${money(calculation.best.total)} руб/т</strong></td></tr>`).join('');
   $('recommendation').innerHTML = `Сводный расчёт: <strong>${items.length} позиции</strong><span>Общий объём: ${decimal(totalVolume)} т · цены и себестоимость рассчитаны отдельно для каждой строки</span>`;
   $('resultCaption').innerHTML = `${resultNames[selectedType]} · ${items.length} позиции · общий объём ${decimal(totalVolume)} т`;
+  if (getRadio('unit') === 'pieces') $('resultCaption').innerHTML += ` · всего штук ${decimal(items.reduce((sum, item) => sum + (Number(item.input.quantity) || 0), 0))}`;
   $('priceBreakdown').innerHTML = `<h3>Итог по заявке: ${money(weighted('total'))} руб/т в среднем</h3><div class="price-lines">${items.map(({ input, calculation }) => `<div><span>${decimal(input.width)}${input.length ? `×${decimal(input.length)}` : ''} мм · ${decimal(input.thickness)} мм</span><strong>${money(calculation.best.total)} руб/т</strong></div>`).join('')}<div class="grand"><span>Средневзвешенная цена</span><strong>${money(weighted('total'))} руб/т</strong></div></div>`;
   $('note').textContent = 'Локальный сводный режим: каждая позиция рассчитана с собственными толщиной, себестоимостью и прайсом.';
 }
 setupBatchMode();
 document.querySelectorAll('.type-card').forEach(card => card.addEventListener('click', () => setTimeout(updateBatchVisibility, 0)));
-$('calculateButton').addEventListener('click', event => { if (!batchMode || !batchSupported()) return; event.stopImmediatePropagation(); if (calculateBatch()) showStep(3); }, true);
+$('calculateButton').addEventListener('click', event => { if (!batchMode || !document.querySelector('#batchModeToggle')?.checked || !batchSupported()) return; event.stopImmediatePropagation(); if (calculateBatch()) showStep(3); }, true);
 document.addEventListener('keydown', event => { if (event.key === 'Escape' && $('purchaseModal')) { event.preventDefault(); $('purchaseModal').remove(); } });
 
 async function exportBatchPurchaseCalculationToExcel(file) {
@@ -448,13 +466,13 @@ async function exportBatchPurchaseCalculationToExcel(file) {
   await workbook.xlsx.load(await file.arrayBuffer());
   const sheet = workbook.getWorksheet('Расчет') || workbook.worksheets[0];
   if (!sheet) throw new Error('В шаблоне не найден лист расчёта.');
-  const grade = $('steelGrade')?.value || '', purchasePrice = Number($('purchasePrice')?.value) || 0;
+  const grade = $('steelGrade')?.value || '', purchasePrice = numericInputValue($('purchasePrice')?.value);
   const groupPrices = Object.fromEntries([...document.querySelectorAll('.batch-purchase-price')].map(input => [input.dataset.group, numericInputValue(input.value)]));
   const salePrices = [...document.querySelectorAll('.batch-sale-price')].map(input => numericInputValue(input.value));
   const rate = Number(String($('cbrRate')?.textContent || '').replace(/[^0-9,.-]/g, '').replace(',', '.')) || 0;
   const keyRate = Number(String($('keyRate')?.textContent || '').replace(/[^0-9,.-]/g, '').replace(',', '.')) || 0;
-  const delivery = Math.max(0, Number($('deliveryCost')?.value) || 0), days = Math.max(0, Number($('defermentDays')?.value) || 0);
-  const monthText = $('modalDeliveryMonth')?.selectedOptions[0]?.textContent || '', selectedPayment = $('input[name="modalPaymentTerms"]:checked')?.value || lastCalculation?.paymentTerms || 'prepayment', paymentText = selectedPayment === 'deferment' ? 'отсрочка' : 'предоплата';
+  const delivery = Math.max(0, numericInputValue($('deliveryCost')?.value)), days = Math.max(0, numericInputValue($('defermentDays')?.value));
+  const monthText = $('modalDeliveryMonth')?.selectedOptions[0]?.textContent || '', paymentText = days > 0 ? 'отсрочка' : 'предоплата';
   const typeLabel = ({ card: 'карточка', sheet: 'лист', rewind: 'рулон' })[selectedType] || selectedType;
   const items = lastCalculation.batchItems.slice(0, 14);
   sheet.getCell('Q1').value = 'рубли'; sheet.getCell('Q2').value = monthText; sheet.getCell('Q4').value = paymentText;
@@ -509,9 +527,24 @@ setupLayoutChoices = function() {
     select.remove();
     return;
   }
-  if (select.options.length || !lastCalculation?.rows) return;
-  lastCalculation.rows.forEach((row, index) => select.add(new Option(`${row.coilWidth} мм — ${prettyLayout(row.cardSize) || row.pieces} — ${money(row.total)} руб/тн`, String(index))));
+  if (!lastCalculation?.rows) return;
+  if (!select.options.length) lastCalculation.rows.forEach((row, index) => select.add(new Option(`${row.coilWidth} мм — ${prettyLayout(row.cardSize) || row.pieces} — ${money(row.total)} руб/тн`, String(index))));
   select.value = '0';
+  if (select.dataset.priceBound !== '1') {
+    select.dataset.priceBound = '1';
+    select.addEventListener('change', () => {
+      const row = lastCalculation?.rows?.[Number(select.value)] || lastCalculation?.best;
+      if (!row) return;
+      const price = Math.round(Number(row.total) || 0);
+      lastCalculation.best = row;
+      ['salePrice', 'finalPrice'].forEach(id => {
+        const input = $(id);
+        if (!input) return;
+        input.value = price;
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+      });
+    });
+  }
 };
 
 const exportBatchCalculationBase4 = exportBatchPurchaseCalculationToExcel;
@@ -525,8 +558,9 @@ exportBatchPurchaseCalculationToExcel = async function(file) {
 };
 function surfaceLabelFor(surface) { return ({ '2b': '2B', '1d': '1D', ba: 'BA', m2b: 'М2Б', '4n': 'N4' })[surface] || '2B'; }
 function numericInputValue(value) { return Number(String(value ?? '').replace(/\s/g, '').replace(',', '.')) || 0; }
-function formatAmountInput(input) { const value = numericInputValue(input.value); if (value) input.value = value.toLocaleString('ru-RU', { maximumFractionDigits: 2 }).replace(/\u00a0/g, ' '); }
+function formatAmountInput(input) { const value = numericInputValue(input.value); input.value = value.toLocaleString('ru-RU', { maximumFractionDigits: 2 }).replace(/\u00a0/g, ' '); }
 function bindAmountFormatting(input) { if (!input || input.dataset.amountBound === '1') return; input.type = 'text'; input.inputMode = 'decimal'; input.dataset.amountBound = '1'; input.addEventListener('focus', () => { input.value = numericInputValue(input.value) === 0 ? '' : String(input.value).replace(/\s/g, ''); }); input.addEventListener('blur', () => formatAmountInput(input)); formatAmountInput(input); }
+['materialCost', 'price'].forEach(id => bindAmountFormatting($(id)));
 
 function setupBatchPurchaseWindow() {
   if (!lastCalculation?.batch || $('batchPurchaseFields')) return;
@@ -547,9 +581,13 @@ function setupBatchPurchaseWindow() {
   const sale = $('salePrice')?.closest('label'); if (sale) sale.hidden = true;
   const final = $('finalPrice')?.closest('label'); if (final) final.hidden = true;
   const sales = document.createElement('div'); sales.id = 'batchSaleFields'; sales.className = 'batch-sale-fields'; sales.innerHTML = '<strong>Цена продажи по позициям</strong>';
-  lastCalculation.batchItems.forEach(({ input, calculation }, index) => { const label = document.createElement('label'); label.className = 'purchase-field'; label.innerHTML = `${index + 1}. ${decimal(input.width)}${input.length ? `×${decimal(input.length)}` : ''} мм · ${decimal(input.thickness)} мм · ${input.grade}<input class="batch-sale-price" data-index="${index}" type="text" inputmode="decimal" value="${Math.round(calculation.best.total)}">`; sales.appendChild(label); });
+  lastCalculation.batchItems.forEach(({ input, calculation }, index) => { const label = document.createElement('label'); label.className = 'purchase-field'; const initialPrice = calculation.rows?.[0]?.total || calculation.best.total || 0; label.innerHTML = `${index + 1}. ${decimal(input.width)}${input.length ? `×${decimal(input.length)}` : ''} мм · ${decimal(input.thickness)} мм · ${input.grade}<input class="batch-sale-price" data-index="${index}" type="text" inputmode="decimal" value="${Math.round(initialPrice)}">`; sales.appendChild(label); });
   meta.after(sales);
+  const finals = document.createElement('div'); finals.id = 'batchFinalFields'; finals.className = 'batch-final-fields'; finals.innerHTML = '<strong>Итоговая цена по позициям</strong><span>Можно изменить вручную для каждой позиции.</span>';
+  lastCalculation.batchItems.forEach(({ input, calculation }, index) => { const label = document.createElement('label'); label.className = 'purchase-field'; label.innerHTML = `${index + 1}. Итоговая цена, руб/тн<input class="batch-final-price" data-index="${index}" type="text" inputmode="decimal" value="${Math.round(calculation.rows?.[0]?.total || calculation.best.total || 0)}">`; finals.appendChild(label); });
+  meta.after(finals);
   [...block.querySelectorAll('.batch-purchase-price'), ...sales.querySelectorAll('.batch-sale-price')].forEach(bindAmountFormatting);
+  finals.querySelectorAll('.batch-final-price').forEach(bindAmountFormatting);
   const summary = document.createElement('div'); summary.id = 'batchPurchaseSummary'; summary.className = 'batch-purchase-summary'; sales.after(summary); result.remove();
   $('salePriceOutput')?.closest('div')?.setAttribute('hidden', 'hidden');
   const renderBatchSummary = (rate, keyRate, delivery, days) => {
@@ -562,7 +600,7 @@ function setupBatchPurchaseWindow() {
       const scrapCost = purchaseRub * (1 - (calculation.best?.yieldRate || 1)) / Math.max(calculation.best?.yieldRate || 1, 0.000001);
       const salePrice = numericInputValue(sales.querySelector(`[data-index="${index}"]`)?.value);
       const deferment = (salePrice + delivery) * keyRate / 100 * days / 365;
-      const finalPrice = salePrice + delivery + deferment;
+      const finalInput = finals.querySelector(`[data-index="${index}"]`), calculatedFinalPrice = salePrice + delivery + deferment, finalPrice = numericInputValue(finalInput?.value) || calculatedFinalPrice;
       return `<section class="batch-price-card"><h4>${index + 1}. ${resultNames[selectedType]} · ${input.grade} · ${decimal(input.thickness)} мм · ${decimal(input.width)}${input.length ? `×${input.length}` : ''} мм · ${surfaceLabelFor(input.surface)}</h4><p>объём ${decimal(volume)} т</p><div><span>Закупка</span><strong>${purchaseRub ? money(purchaseRub) : '—'} руб/т</strong></div><div><span>Переработка</span><strong>${money(processing)} руб/т</strong></div><div><span>Доставка</span><strong>${money(delivery)} руб/т</strong></div><div><span>Отсрочка</span><strong>${money(deferment)} руб/т</strong></div><div><span>Цена продажи</span><strong>${salePrice ? money(salePrice) : '—'} руб/т</strong></div><div class="batch-price-total"><span>Итоговая цена</span><strong>${salePrice ? money(finalPrice) : '—'} руб/т</strong></div></section>`;
     }).join('');
   };
@@ -582,7 +620,7 @@ function setupBatchPurchaseWindow() {
     [...sales.querySelectorAll('.batch-sale-price')].forEach((input, index) => { const target = summary.children[index]?.querySelector('strong'); if (target) target.textContent = `${money(numericInputValue(input.value))} руб/т`; });
     renderBatchSummary(rate, keyRate, delivery, days);
   };
-  [...block.querySelectorAll('input'), ...sales.querySelectorAll('input'), $('deliveryCost'), $('defermentDays'), $('purchaseCurrency')].filter(Boolean).forEach(input => input.addEventListener(input.tagName === 'SELECT' ? 'change' : 'input', refreshBatchSummary));
+  [...block.querySelectorAll('input'), ...sales.querySelectorAll('input'), ...finals.querySelectorAll('input'), $('deliveryCost'), $('defermentDays'), $('purchaseCurrency')].filter(Boolean).forEach(input => input.addEventListener(input.tagName === 'SELECT' ? 'change' : 'input', refreshBatchSummary));
   $('cbrRate')?.closest('.purchase-rate')?.addEventListener('DOMSubtreeModified', refreshBatchSummary);
   const ratesObserver = new MutationObserver(refreshBatchSummary);
   [$('cbrRate'), $('keyRate')].filter(Boolean).forEach(node => ratesObserver.observe(node, { childList: true, characterData: true, subtree: true }));
@@ -592,6 +630,7 @@ function setupBatchPurchaseWindow() {
     item.calculation.best = row;
     const saleInput = sales.querySelector(`[data-index="${index}"]`);
     if (saleInput) { saleInput.value = Math.round(row.total || 0); formatAmountInput(saleInput); saleInput.dispatchEvent(new Event('input', { bubbles: true })); }
+    const finalInput = document.querySelector(`.batch-final-price[data-index="${index}"]`); if (finalInput) { finalInput.value = Math.round(row.total || 0); formatAmountInput(finalInput); }
     refreshBatchSummary();
   }));
   refreshBatchSummary();
@@ -640,14 +679,63 @@ new MutationObserver(() => {
     input.addEventListener('focus', () => { if (numericInputValue(input.value) === 0) input.value = ''; });
   }
 }).observe(document.body, { childList: true, subtree: true });
-function refreshTypeSpecificFields() {
+function syncBatchLengthFields() {
+  const rows = document.querySelectorAll('#batchPositions .batch-row');
+  const needsLength = selectedType === 'sheet' || selectedType === 'card';
+  rows.forEach(row => {
+    const existing = row.querySelector('.batch-length');
+    if (needsLength && !existing) {
+      const widthLabel = row.querySelector('.batch-width')?.closest('label');
+      if (widthLabel) widthLabel.insertAdjacentHTML('afterend', '<label>Длина, мм<input class="batch-length" type="number" min="1" step="1" value="2500" placeholder="Длина"></label>');
+    }
+    if (!needsLength && existing) existing.closest('label')?.remove();
+  });
+}
+syncBatchLengthFields();
+document.querySelectorAll('.type-card').forEach(card => card.addEventListener('click', () => setTimeout(syncBatchLengthFields, 0)));
+const updateStripSizeControlBase = updateStripSizeControl;
+updateStripSizeControl = function () {
+  updateStripSizeControlBase();
+  if (selectedType === 'strip') {
+    const toggle = document.querySelector('#batchModeToggle');
+    const mode = document.querySelector('input[name="stripSizeMode"]:checked')?.value || 'single';
+    if (toggle) toggle.checked = mode === 'multiple';
+  }
+};
+  function refreshTypeSpecificFields() {
   const hideLength = selectedType === 'strip' || selectedType === 'rewind';
   const lengthField = document.querySelector('.length-field');
   if (lengthField) { lengthField.hidden = hideLength; lengthField.style.display = hideLength ? 'none' : ''; }
   const batchToggle = document.querySelector('.batch-toggle');
-  if (batchToggle) { batchToggle.hidden = selectedType === 'strip'; batchToggle.style.display = selectedType === 'strip' ? 'none' : ''; }
-}
-refreshTypeSpecificFields();
+  if (batchToggle) {
+    batchToggle.hidden = false;
+    batchToggle.style.display = '';
+    if (batchToggle.dataset.stripModeBound !== '1') {
+      batchToggle.dataset.stripModeBound = '1';
+      batchToggle.querySelector('input')?.addEventListener('change', event => {
+        if (selectedType !== 'strip') return;
+        event.stopImmediatePropagation();
+        const mode = batchToggle.querySelector('input')?.checked ? 'multiple' : 'single';
+        const modeInput = document.querySelector(`input[name="stripSizeMode"][value="${mode}"]`);
+        if (modeInput) modeInput.checked = true;
+        updateStripSizeControl();
+      }, true);
+    }
+  }
+  }
+  $('calculateButton').addEventListener('click', event => {
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    if (batchMode && batchSupported()) {
+      if (calculateBatch()) showStep(3);
+      return;
+    }
+    calculate();
+    if (!$('error').hidden) return;
+    if (getRadio('unit') === 'pieces' && (selectedType === 'sheet' || selectedType === 'card')) $('resultCaption').innerHTML += ` · количество ${decimal(Number($('quantity').value) || 0)} шт`;
+    showStep(3);
+  }, true);
+  refreshTypeSpecificFields();
 document.querySelectorAll('.type-card').forEach(card => card.addEventListener('click', () => setTimeout(refreshTypeSpecificFields, 0)));
 const serviceDataWithIntegratedFilm = serviceData;
 serviceData = function (...args) {
