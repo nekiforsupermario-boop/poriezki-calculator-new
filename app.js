@@ -187,7 +187,8 @@ function calculate() {
   const candidates = selectedType === 'sheet' || selectedType === 'rewind' ? [productWidth] : COIL_WIDTHS;
   const rows = (selectedType === 'card' ? candidates.flatMap(width => cardLayouts(width, productWidth, length, thickness).map(layout => serviceData(width, layout.widths, thickness, volume, price, layout.label))) : selectedType === 'strip' ? candidates.flatMap(width => (stripSizeMode === 'single' ? (productWidths.length > 1 ? productWidths.flatMap(stripWidth => [
     ...stripLayouts(width, stripWidth, thickness).map(layout => serviceData(width, layout.widths, thickness, volume, price, layout.label)),
-    ...subcutLayouts(width, stripWidth, thickness).map(layout => serviceDataWithSubcut(width, stripWidth, thickness, volume, price, layout))
+    ...subcutLayouts(width, stripWidth, thickness).map(layout => serviceDataWithSubcut(width, stripWidth, thickness, volume, price, layout)),
+    ...multiStripLayouts(width, productWidths, thickness).map(layout => serviceData(width, layout.widths, thickness, volume, price, layout.label))
   ]) : [
     ...stripLayouts(width, productWidth, thickness).map(layout => serviceData(width, layout.widths, thickness, volume, price, layout.label)),
     ...subcutLayouts(width, productWidth, thickness).map(layout => serviceDataWithSubcut(width, productWidth, thickness, volume, price, layout))
