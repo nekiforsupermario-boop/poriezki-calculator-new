@@ -427,8 +427,9 @@ function calculateBatch() {
   for (const row of rows) {
     $('thickness').value = row.thickness; $('productWidth').value = row.width; $('productLength').value = row.length; $('quantity').value = row.quantity; $('materialCost').value = row.materialCost; $('price').value = row.price;
     document.querySelector(`input[name="surface"][value="${row.surface}"]`)?.click(); document.querySelector(`input[name="film"][value="${row.film}"]`)?.click(); document.querySelector(`input[name="filmSides"][value="${row.filmSides}"]`)?.click();
+    lastCalculation = null; $('error').hidden = true;
     calculate();
-    if (!$('error').hidden || !lastCalculation?.best) { error.textContent = `Позиция ${row.width} мм × ${row.thickness} мм не проходит по условиям прайса или заполнена неверно.`; error.hidden = false; Object.entries(original).forEach(([id, value]) => { $(id).value = value; }); return false; }
+    if (!$('error').hidden || !lastCalculation?.best) { const reason = error.textContent && error.textContent !== 'Проверьте заполнение параметров.' ? ` Причина: ${error.textContent}` : ''; error.textContent = `Позиция ${row.width} мм × ${row.thickness} мм не рассчиталась.${reason}`; error.hidden = false; Object.entries(original).forEach(([id, value]) => { if (id === 'surface' || id === 'film' || id === 'filmSides') document.querySelector(`input[name="${id}"][value="${value}"]`)?.click(); else $(id).value = value; }); return false; }
     items.push({ input: row, orderVolume: lastCalculation.volume, groupKey: `${row.grade}|${row.thickness}|${row.width}|${row.surface}|${row.film}|${row.filmSides}`, calculation: JSON.parse(JSON.stringify(lastCalculation)) });
   }
   const groupVolumes = new Map();
