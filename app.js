@@ -377,9 +377,9 @@ function updateBatchVisibility() {
   const surfaceFieldset = [...document.querySelectorAll('#paramsStep fieldset')].find(fieldset => fieldset.querySelector('legend')?.textContent.trim() === 'Поверхность');
   if (surfaceFieldset) surfaceFieldset.hidden = batchMode && supported;
   const filmFieldset = [...document.querySelectorAll('#paramsStep fieldset')].find(fieldset => fieldset.querySelector('legend')?.textContent.trim() === 'Плёнка');
-  if (filmFieldset) filmFieldset.hidden = batchMode && supported;
+  if (filmFieldset) { filmFieldset.hidden = batchMode && supported; filmFieldset.style.display = batchMode && supported ? 'none' : ''; }
   const filmSidesFieldset = document.querySelector('.film-sides-field');
-  if (filmSidesFieldset) filmSidesFieldset.hidden = batchMode && supported;
+  if (filmSidesFieldset) { filmSidesFieldset.hidden = batchMode && supported; filmSidesFieldset.style.display = batchMode && supported ? 'none' : ''; }
   host.hidden = !(batchMode && supported);
   if (!(batchMode && supported)) return;
   if (!host.querySelector('.batch-row')) {
