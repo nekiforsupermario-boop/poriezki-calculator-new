@@ -336,12 +336,16 @@ function batchRowMarkup(row = {}) {
   const grades = typeof STEEL_GRADES === 'undefined' ? ['AISI 201 J4'] : STEEL_GRADES;
   const gradeOptions = grades.map(grade => `<option value="${grade}" ${grade === (row.grade || 'AISI 201 J4') ? 'selected' : ''}>${grade}</option>`).join('');
   const surfaceOptions = [['2b', '2B'], ['1d', '1D'], ['ba', 'BA'], ['m2b', 'М2Б'], ['4n', 'Шлифовка']].map(([value, label]) => `<option value="${value}" ${value === (row.surface || '2b') ? 'selected' : ''}>${label}</option>`).join('');
+  const filmOptions = [['none', 'Без плёнки'], ['pe', 'PE'], ['lpe', 'LPE']].map(([value, label]) => `<option value="${value}" ${value === (row.film || 'none') ? 'selected' : ''}>${label}</option>`).join('');
+  const filmSideOptions = [['one', 'Одна сторона'], ['two', 'Две стороны']].map(([value, label]) => `<option value="${value}" ${value === (row.filmSides || 'one') ? 'selected' : ''}>${label}</option>`).join('');
   return `<div class="batch-row">
     <label>Марка<select class="batch-grade">${gradeOptions}</select></label>
     <label>Толщина, мм<input class="batch-thickness" type="number" min="0.01" step="0.01" value="${row.thickness ?? 1.2}" placeholder="Толщина"></label>
     <label>Ширина, мм<input class="batch-width" type="number" min="1" step="1" value="${row.width ?? 1250}" placeholder="Ширина"></label>
     ${lengthField}
     <label>Поверхность<select class="batch-surface">${surfaceOptions}</select></label>
+    <label>Плёнка<select class="batch-film">${filmOptions}</select></label>
+    <label>Стороны плёнки<select class="batch-film-sides">${filmSideOptions}</select></label>
     <label>Количество<input class="batch-quantity" type="number" min="0.001" step="0.001" value="${row.quantity ?? 1}" placeholder="Вес / штуки"></label>
     <label>Себестоимость, руб/т<input class="batch-material" type="text" inputmode="decimal" value="${row.materialCost ?? 0}" placeholder="Себестоимость"></label>
     <label>Прайс, руб/т<input class="batch-price" type="text" inputmode="decimal" value="${row.price ?? 0}" placeholder="Прайс"></label>
@@ -357,7 +361,9 @@ function readBatchRows() {
     materialCost: numericInputValue(row.querySelector('.batch-material')?.value),
     price: numericInputValue(row.querySelector('.batch-price')?.value),
     grade: row.querySelector('.batch-grade')?.value || 'AISI 201 J4',
-    surface: row.querySelector('.batch-surface')?.value || '2b'
+    surface: row.querySelector('.batch-surface')?.value || '2b',
+    film: row.querySelector('.batch-film')?.value || 'none',
+    filmSides: row.querySelector('.batch-film-sides')?.value || 'one'
   })).filter(row => [row.width, row.length, row.thickness, row.quantity, row.materialCost, row.price].every(value => Number.isFinite(value)) && row.width > 0 && row.thickness > 0 && row.quantity > 0 && row.materialCost >= 0 && row.price >= 0 && ((selectedType === 'sheet' || selectedType === 'card') ? row.length > 0 : true));
 }
 function updateBatchVisibility() {
@@ -375,7 +381,7 @@ function updateBatchVisibility() {
   if (!host.querySelector('.batch-row')) {
     host.innerHTML = `<div class="batch-heading"><strong>Позиции заявки</strong><span>У каждой позиции свои размеры, толщина, марка, поверхность, себестоимость и прайс. Одинаковые марка + толщина + ширина + поверхность автоматически объединяются в один рулон.</span></div><div class="batch-rows"></div><button class="button ghost batch-add" type="button">+ Добавить типоразмер</button>`;
     const rows = host.querySelector('.batch-rows');
-    rows.insertAdjacentHTML('beforeend', batchRowMarkup({ grade: $('materialGrade')?.value || 'AISI 201 J4', width: Number($('productWidth')?.value) || 1250, length: Number($('productLength')?.value) || 2500, thickness: Number($('thickness')?.value) || 1.2, quantity: Number($('quantity')?.value) || 1, materialCost: 0, price: 0 }));
+    rows.insertAdjacentHTML('beforeend', batchRowMarkup({ grade: $('materialGrade')?.value || 'AISI 201 J4', width: Number($('productWidth')?.value) || 1250, length: Number($('productLength')?.value) || 2500, thickness: Number($('thickness')?.value) || 1.2, quantity: Number($('quantity')?.value) || 1, materialCost: 0, price: 0, film: getRadio('film') || 'none', filmSides: getRadio('filmSides') || 'one' }));
     rows.querySelectorAll('.batch-material,.batch-price').forEach(bindAmountFormatting);
     host.querySelector('.batch-add').addEventListener('click', () => {
       const source = rows.lastElementChild;
@@ -386,6 +392,8 @@ function updateBatchVisibility() {
         width: Number(value('.batch-width')) || 1250,
         length: Number(value('.batch-length')) || 2500,
         surface: value('.batch-surface') || '2b',
+        film: value('.batch-film') || 'none',
+        filmSides: value('.batch-film-sides') || 'one',
         quantity: Number(value('.batch-quantity')) || 1,
         materialCost: 0,
         price: 0
@@ -409,15 +417,15 @@ function setupBatchMode() {
 function calculateBatch() {
   const rows = readBatchRows(), error = $('error');
   if (rows.length < 2) { error.textContent = 'Добавьте минимум две позиции и заполните все их параметры.'; error.hidden = false; return false; }
-  const groups = new Map(); rows.forEach((row, index) => { const key = `${row.grade}|${row.thickness}|${row.width}|${row.surface}`; if (!groups.has(key)) groups.set(key, { id: groups.size + 1, rows: [] }); groups.get(key).rows.push({ row, index }); });
-  const original = { thickness: $('thickness').value, productWidth: $('productWidth').value, productLength: $('productLength').value, quantity: $('quantity').value, materialCost: $('materialCost').value, price: $('price').value, surface: getRadio('surface') };
+  const groups = new Map(); rows.forEach((row, index) => { const key = `${row.grade}|${row.thickness}|${row.width}|${row.surface}|${row.film}|${row.filmSides}`; if (!groups.has(key)) groups.set(key, { id: groups.size + 1, rows: [] }); groups.get(key).rows.push({ row, index }); });
+  const original = { thickness: $('thickness').value, productWidth: $('productWidth').value, productLength: $('productLength').value, quantity: $('quantity').value, materialCost: $('materialCost').value, price: $('price').value, surface: getRadio('surface'), film: getRadio('film'), filmSides: getRadio('filmSides') };
   const items = [];
   for (const row of rows) {
     $('thickness').value = row.thickness; $('productWidth').value = row.width; $('productLength').value = row.length; $('quantity').value = row.quantity; $('materialCost').value = row.materialCost; $('price').value = row.price;
-    document.querySelector(`input[name="surface"][value="${row.surface}"]`)?.click();
+    document.querySelector(`input[name="surface"][value="${row.surface}"]`)?.click(); document.querySelector(`input[name="film"][value="${row.film}"]`)?.click(); document.querySelector(`input[name="filmSides"][value="${row.filmSides}"]`)?.click();
     calculate();
     if (!$('error').hidden || !lastCalculation?.best) { error.textContent = `Позиция ${row.width} мм × ${row.thickness} мм не проходит по условиям прайса или заполнена неверно.`; error.hidden = false; Object.entries(original).forEach(([id, value]) => { $(id).value = value; }); return false; }
-    items.push({ input: row, orderVolume: lastCalculation.volume, groupKey: `${row.grade}|${row.thickness}|${row.width}|${row.surface}`, calculation: JSON.parse(JSON.stringify(lastCalculation)) });
+    items.push({ input: row, orderVolume: lastCalculation.volume, groupKey: `${row.grade}|${row.thickness}|${row.width}|${row.surface}|${row.film}|${row.filmSides}`, calculation: JSON.parse(JSON.stringify(lastCalculation)) });
   }
   const groupVolumes = new Map();
   items.forEach(item => groupVolumes.set(item.groupKey, (groupVolumes.get(item.groupKey) || 0) + item.calculation.volume));
@@ -436,9 +444,9 @@ function calculateBatch() {
     item.calculation.orderVolume = item.orderVolume;
     item.calculation.groupVolume = groupVolume;
   });
-  Object.entries(original).forEach(([id, value]) => { if (id === 'surface') document.querySelector(`input[name="surface"][value="${value}"]`)?.click(); else $(id).value = value; });
+  Object.entries(original).forEach(([id, value]) => { if (id === 'surface' || id === 'film' || id === 'filmSides') document.querySelector(`input[name="${id}"][value="${value}"]`)?.click(); else $(id).value = value; });
   groups.forEach(group => {
-    const groupItems = items.filter(item => item.groupKey === `${group.rows[0].row.grade}|${group.rows[0].row.thickness}|${group.rows[0].row.width}|${group.rows[0].row.surface}`);
+    const groupItems = items.filter(item => item.groupKey === `${group.rows[0].row.grade}|${group.rows[0].row.thickness}|${group.rows[0].row.width}|${group.rows[0].row.surface}|${group.rows[0].row.film}|${group.rows[0].row.filmSides}`);
     const commonWidths = groupItems.reduce((common, item) => { const widths = new Set((item.calculation.rows || []).map(row => row.coilWidth)); return common ? new Set([...common].filter(width => widths.has(width))) : widths; }, null);
     const sharedCoilWidth = [...(commonWidths || [])].sort((a, b) => a - b)[0];
     if (sharedCoilWidth) groupItems.forEach(item => { const sharedRow = item.calculation.rows.find(row => row.coilWidth === sharedCoilWidth); if (sharedRow) item.calculation.best = sharedRow; item.calculation.sharedCoilWidth = sharedCoilWidth; item.groupId = group.id; });
