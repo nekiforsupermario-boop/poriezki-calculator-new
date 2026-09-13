@@ -39,3 +39,4 @@ select{display:block;width:100%;margin-top:7px;border:1px solid #d8e0e6;border-r
  .calculation-error-modal{position:fixed;inset:0;z-index:50;display:grid;place-items:center;padding:20px;background:rgba(12,18,24,.72)}
  .calculation-error-window{width:min(460px,100%);padding:26px;border:1px solid #f47b20;border-radius:16px;background:#2d353e;color:#f5f7f8;box-shadow:0 20px 60px rgba(0,0,0,.35)}
  .calculation-error-window h2{margin:0 0 12px;color:#ff8a2a;font-size:20px}.calculation-error-window p{margin:0 0 20px;line-height:1.5;color:#dce4e9}
+ .batch-price-card .batch-price-total input{width:180px;box-sizing:border-box;margin:0;padding:4px 8px;border:1px solid #59636e;border-radius:6px;background:#22272e;color:#ff9a4c;font:inherit;font-size:17px;font-weight:800;text-align:right}.batch-sale-fields[hidden],.batch-final-fields[hidden]{display:none!important}

@@ -469,6 +469,7 @@ async function exportBatchPurchaseCalculationToExcel(file) {
   const grade = $('steelGrade')?.value || '', purchasePrice = numericInputValue($('purchasePrice')?.value);
   const groupPrices = Object.fromEntries([...document.querySelectorAll('.batch-purchase-price')].map(input => [input.dataset.group, numericInputValue(input.value)]));
   const salePrices = [...document.querySelectorAll('.batch-sale-price')].map(input => numericInputValue(input.value));
+  const finalPrices = lastCalculation.batchFinalPrices || [];
   const rate = Number(String($('cbrRate')?.textContent || '').replace(/[^0-9,.-]/g, '').replace(',', '.')) || 0;
   const keyRate = Number(String($('keyRate')?.textContent || '').replace(/[^0-9,.-]/g, '').replace(',', '.')) || 0;
   const delivery = Math.max(0, numericInputValue($('deliveryCost')?.value)), days = Math.max(0, numericInputValue($('defermentDays')?.value));
@@ -482,7 +483,7 @@ async function exportBatchPurchaseCalculationToExcel(file) {
       row.getCell(6).value = selectedType === 'sheet' || selectedType === 'card' ? input.length : null; row.getCell(7).value = surfaceLabelFor(input.surface);
       row.getCell(8).value = getRadio('unit') === 'pieces' ? input.quantity : null; row.getCell(9).value = calculation.orderVolume || calculation.volume;
       if (purchase) { const itemGroupKey = groupKey || `${input.grade}|${input.thickness}|${input.width}|${input.surface}`; row.getCell(10).value = rate; row.getCell(11).value = groupPrices[itemGroupKey] ?? purchasePrice; }
-      else { row.getCell(12).value = input.materialCost; row.getCell(15).value = calculation.best.processing; row.getCell(17).value = calculation.best.processing; row.getCell(21).value = salePrices[index] || calculation.best.total; }
+      else { row.getCell(12).value = input.materialCost; row.getCell(15).value = calculation.best.processing; row.getCell(17).value = calculation.best.processing; row.getCell(21).value = finalPrices[index] ?? salePrices[index] ?? calculation.best.total; }
     };
     const top = sheet.getRow(8 + index), bottom = sheet.getRow(45 + index); fill(top); fill(bottom, true); if (index > 0) copyFormulaRow(sheet, 45, 45 + index, [2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
   });
@@ -583,9 +584,12 @@ function setupBatchPurchaseWindow() {
   const sales = document.createElement('div'); sales.id = 'batchSaleFields'; sales.className = 'batch-sale-fields'; sales.innerHTML = '<strong>Цена продажи по позициям</strong>';
   lastCalculation.batchItems.forEach(({ input, calculation }, index) => { const label = document.createElement('label'); label.className = 'purchase-field'; const initialPrice = calculation.rows?.[0]?.total || calculation.best.total || 0; label.innerHTML = `${index + 1}. ${decimal(input.width)}${input.length ? `×${decimal(input.length)}` : ''} мм · ${decimal(input.thickness)} мм · ${input.grade}<input class="batch-sale-price" data-index="${index}" type="text" inputmode="decimal" value="${Math.round(initialPrice)}">`; sales.appendChild(label); });
   meta.after(sales);
+  sales.hidden = true;
   const finals = document.createElement('div'); finals.id = 'batchFinalFields'; finals.className = 'batch-final-fields'; finals.innerHTML = '<strong>Итоговая цена по позициям</strong><span>Можно изменить вручную для каждой позиции.</span>';
-  lastCalculation.batchItems.forEach(({ input, calculation }, index) => { const label = document.createElement('label'); label.className = 'purchase-field'; label.innerHTML = `${index + 1}. Итоговая цена, руб/тн<input class="batch-final-price" data-index="${index}" type="text" inputmode="decimal" value="${Math.round(calculation.rows?.[0]?.total || calculation.best.total || 0)}">`; finals.appendChild(label); });
+  const initialDelivery = Math.max(0, numericInputValue($('deliveryCost')?.value)), initialDays = Math.max(0, numericInputValue($('defermentDays')?.value)), initialKeyRate = Number(String($('keyRate')?.textContent || '').replace(/[^0-9,.-]/g, '').replace(',', '.')) || 14;
+  lastCalculation.batchItems.forEach(({ input, calculation }, index) => { const label = document.createElement('label'); label.className = 'purchase-field'; const sale = calculation.rows?.[0]?.total || calculation.best.total || 0, initialFinal = sale + initialDelivery + sale * initialKeyRate / 100 * initialDays / 365; label.innerHTML = `${index + 1}. Итоговая цена, руб/тн<input class="batch-final-price" data-index="${index}" type="text" inputmode="decimal" value="${Math.round(initialFinal)}">`; finals.appendChild(label); });
   meta.after(finals);
+  finals.hidden = true;
   [...block.querySelectorAll('.batch-purchase-price'), ...sales.querySelectorAll('.batch-sale-price')].forEach(bindAmountFormatting);
   finals.querySelectorAll('.batch-final-price').forEach(bindAmountFormatting);
   const summary = document.createElement('div'); summary.id = 'batchPurchaseSummary'; summary.className = 'batch-purchase-summary'; sales.after(summary); result.remove();
@@ -600,8 +604,8 @@ function setupBatchPurchaseWindow() {
       const scrapCost = purchaseRub * (1 - (calculation.best?.yieldRate || 1)) / Math.max(calculation.best?.yieldRate || 1, 0.000001);
       const salePrice = numericInputValue(sales.querySelector(`[data-index="${index}"]`)?.value);
       const deferment = (salePrice + delivery) * keyRate / 100 * days / 365;
-      const finalInput = finals.querySelector(`[data-index="${index}"]`), calculatedFinalPrice = salePrice + delivery + deferment, finalPrice = numericInputValue(finalInput?.value) || calculatedFinalPrice;
-      return `<section class="batch-price-card"><h4>${index + 1}. ${resultNames[selectedType]} · ${input.grade} · ${decimal(input.thickness)} мм · ${decimal(input.width)}${input.length ? `×${input.length}` : ''} мм · ${surfaceLabelFor(input.surface)}</h4><p>объём ${decimal(volume)} т</p><div><span>Закупка</span><strong>${purchaseRub ? money(purchaseRub) : '—'} руб/т</strong></div><div><span>Переработка</span><strong>${money(processing)} руб/т</strong></div><div><span>Доставка</span><strong>${money(delivery)} руб/т</strong></div><div><span>Отсрочка</span><strong>${money(deferment)} руб/т</strong></div><div><span>Цена продажи</span><strong>${salePrice ? money(salePrice) : '—'} руб/т</strong></div><div class="batch-price-total"><span>Итоговая цена</span><strong>${salePrice ? money(finalPrice) : '—'} руб/т</strong></div></section>`;
+      const calculatedFinalPrice = salePrice + delivery + deferment, finalPrice = lastCalculation.batchFinalPrices?.[index] ?? calculatedFinalPrice;
+      return `<section class="batch-price-card"><h4>${index + 1}. ${resultNames[selectedType]} · ${input.grade} · ${decimal(input.thickness)} мм · ${decimal(input.width)}${input.length ? `×${input.length}` : ''} мм · ${surfaceLabelFor(input.surface)}</h4><p>объём ${decimal(volume)} т</p><div><span>Закупка</span><strong>${purchaseRub ? money(purchaseRub) : '—'} руб/т</strong></div><div><span>Переработка</span><strong>${money(processing)} руб/т</strong></div><div><span>Доставка</span><strong>${money(delivery)} руб/т</strong></div><div><span>Отсрочка</span><strong>${money(deferment)} руб/т</strong></div><div><span>Прайс</span><strong>${input.price ? money(input.price) : '—'} руб/т</strong></div><div class="batch-price-total"><span>Итоговая цена</span><input class="batch-card-final-price" data-index="${index}" type="text" inputmode="decimal" value="${finalPrice ? money(finalPrice) : ''}"></div></section>`;
     }).join('');
   };
   const refreshBatchSummary = () => {
@@ -620,7 +624,16 @@ function setupBatchPurchaseWindow() {
     [...sales.querySelectorAll('.batch-sale-price')].forEach((input, index) => { const target = summary.children[index]?.querySelector('strong'); if (target) target.textContent = `${money(numericInputValue(input.value))} руб/т`; });
     renderBatchSummary(rate, keyRate, delivery, days);
   };
-  [...block.querySelectorAll('input'), ...sales.querySelectorAll('input'), ...finals.querySelectorAll('input'), $('deliveryCost'), $('defermentDays'), $('purchaseCurrency')].filter(Boolean).forEach(input => input.addEventListener(input.tagName === 'SELECT' ? 'change' : 'input', refreshBatchSummary));
+  summary.addEventListener('input', event => {
+    if (!event.target.classList.contains('batch-card-final-price')) return;
+    const index = Number(event.target.dataset.index);
+    if (!lastCalculation.batchFinalPrices) lastCalculation.batchFinalPrices = [];
+    lastCalculation.batchFinalPrices[index] = numericInputValue(event.target.value);
+  });
+  summary.addEventListener('blur', event => {
+    if (event.target.classList.contains('batch-card-final-price')) formatAmountInput(event.target);
+  }, true);
+  [...block.querySelectorAll('input'), ...sales.querySelectorAll('input'), ...finals.querySelectorAll('input'), $('deliveryCost'), $('defermentDays'), $('purchaseCurrency')].filter(Boolean).forEach(input => input.addEventListener(input.tagName === 'SELECT' ? 'change' : 'input', event => { if (event.target.classList.contains('batch-final-price')) event.target.dataset.edited = '1'; refreshBatchSummary(); }));
   $('cbrRate')?.closest('.purchase-rate')?.addEventListener('DOMSubtreeModified', refreshBatchSummary);
   const ratesObserver = new MutationObserver(refreshBatchSummary);
   [$('cbrRate'), $('keyRate')].filter(Boolean).forEach(node => ratesObserver.observe(node, { childList: true, characterData: true, subtree: true }));
@@ -630,7 +643,8 @@ function setupBatchPurchaseWindow() {
     item.calculation.best = row;
     const saleInput = sales.querySelector(`[data-index="${index}"]`);
     if (saleInput) { saleInput.value = Math.round(row.total || 0); formatAmountInput(saleInput); saleInput.dispatchEvent(new Event('input', { bubbles: true })); }
-    const finalInput = document.querySelector(`.batch-final-price[data-index="${index}"]`); if (finalInput) { finalInput.value = Math.round(row.total || 0); formatAmountInput(finalInput); }
+    if (lastCalculation.batchFinalPrices) lastCalculation.batchFinalPrices[index] = undefined;
+    const finalInput = document.querySelector(`.batch-final-price[data-index="${index}"]`); if (finalInput) { finalInput.dataset.edited = '0'; finalInput.value = Math.round((row.total || 0) + (numericInputValue($('deliveryCost')?.value)) + (row.total || 0) * (numericInputValue($('defermentDays')?.value)) * (Number(String($('keyRate')?.textContent || '').replace(/[^0-9,.-]/g, '').replace(',', '.')) || 14) / 100 / 365); formatAmountInput(finalInput); }
     refreshBatchSummary();
   }));
   refreshBatchSummary();
