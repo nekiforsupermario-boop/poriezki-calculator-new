@@ -376,6 +376,10 @@ function updateBatchVisibility() {
   document.querySelectorAll('.field-grid > label').forEach(label => { label.hidden = batchMode && supported; });
   const surfaceFieldset = [...document.querySelectorAll('#paramsStep fieldset')].find(fieldset => fieldset.querySelector('legend')?.textContent.trim() === 'Поверхность');
   if (surfaceFieldset) surfaceFieldset.hidden = batchMode && supported;
+  const filmFieldset = [...document.querySelectorAll('#paramsStep fieldset')].find(fieldset => fieldset.querySelector('legend')?.textContent.trim() === 'Плёнка');
+  if (filmFieldset) filmFieldset.hidden = batchMode && supported;
+  const filmSidesFieldset = document.querySelector('.film-sides-field');
+  if (filmSidesFieldset) filmSidesFieldset.hidden = batchMode && supported;
   host.hidden = !(batchMode && supported);
   if (!(batchMode && supported)) return;
   if (!host.querySelector('.batch-row')) {

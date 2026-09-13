@@ -42,3 +42,4 @@ select{display:block;width:100%;margin-top:7px;border:1px solid #d8e0e6;border-r
  .batch-price-card .batch-price-total input{width:180px;box-sizing:border-box;margin:0;padding:4px 8px;border:1px solid #59636e;border-radius:6px;background:#22272e;color:#ff9a4c;font:inherit;font-size:17px;font-weight:800;text-align:right}.batch-sale-fields[hidden],.batch-final-fields[hidden]{display:none!important}
  .table-wrap{max-height:420px;overflow:auto}
  .yield-col,.yield-cell{display:none!important}
+ .batch-row{grid-template-columns:1.1fr .75fr .9fr 1fr 1fr 1fr 1.1fr 1.55fr 1.1fr 1.1fr 38px}.batch-row .batch-quantity{max-width:150px}.batch-row .batch-remove{grid-column:-1}
