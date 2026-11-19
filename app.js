@@ -241,12 +241,27 @@ function calculate() {
   localStorage.setItem('metal-cutter-values', JSON.stringify({ type: selectedType, thickness, productWidth: productWidthRaw, stripSizeMode, stripOrders, length, quantity, unit, volume, materialCost, price, surface: getRadio('surface'), film, filmSides, openMode: getRadio('openMode'), paymentTerms: getRadio('paymentTerms'), deliveryMonth: $('deliveryMonth')?.value || '' }));
 }
 function renderCustom(coilWidth, thickness, productWidth, volume, price) {
-  const out = $('customResult'), widths = Array.isArray(productWidth) ? productWidth : [productWidth], minWidth = widths.reduce((sum, width) => sum + width, 0);
+  const out = $('customResult'), widths = Array.isArray(productWidth) ? productWidth : [productWidth];
+  const minWidth = widths.reduce((sum, width) => sum + width, 0);
   if (!coilWidth || coilWidth < minWidth) { out.textContent = 'Введите ширину не меньше суммы типоразмеров'; return; }
   const layouts = selectedType === 'strip' ? multiStripLayouts(coilWidth, widths, thickness) : [];
-  const layout = layouts.at(-1);
-  const row = serviceData(coilWidth, layout ? layout.widths : productWidth, thickness, volume, price, layout?.label || '');
+  const multi = selectedType === 'strip' && lastCalculation?.stripSizeMode === 'multiple';
+  const alternatives = layouts.map(layout => ({
+    layout,
+    match: multi ? stripLayoutMatch(layout, lastCalculation.stripOrders, lastCalculation.unit, thickness, lastCalculation.length, coilWidth) : null
+  }));
+  const used = item => item.layout.widths.reduce((sum, width) => sum + width, 0);
+  alternatives.sort((a, b) =>
+    multi && Math.abs(a.match.score - b.match.score) > 1e-9 ? a.match.score - b.match.score : used(b) - used(a)
+  );
+  const chosen = alternatives[0], layout = chosen?.layout;
+  const rawVolume = chosen?.match?.sourceVolume ?? volume;
+  const row = serviceData(coilWidth, layout ? layout.widths : productWidth, thickness, rawVolume, price, layout?.label || '');
   if (!row) { out.textContent = 'Вариант не проходит по условиям прайса или минимальному откройнику'; return; }
+  if (chosen?.match) {
+    row.sourceVolume = chosen.match.sourceVolume;
+    row.requestedWeights = chosen.match.requestedWeights;
+  }
   const weights = selectedType === 'strip' ? `<div class="custom-strip-weight">Расчётный вес готовых лент: ${actualWeightText(row, volume)}</div>` : '';
   out.innerHTML = `${decimal(coilWidth)} мм · ${prettyLayout(row.cardSize) || row.pieces} полос / листов${selectedType === 'sheet' || selectedType === 'rewind' ? '' : ` · откройник <strong>${decimal(row.scrap)} мм</strong>`} · переработка ${money(row.processing)} руб/тн · откройник от себестоимости ${money(row.scrapCost)} руб/тн · <strong>${money(row.total)} руб/тн</strong>${weights}`;
 }
