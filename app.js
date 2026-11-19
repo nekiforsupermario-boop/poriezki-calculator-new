@@ -66,7 +66,22 @@ function readStripWidths(raw) { return [...new Set(String(raw ?? '').split(/[\/;
 function updateStripSizeControl() { const label = $('productWidthLabel'), current = $('productWidth'), quantityLabel = $('quantity')?.closest('label'), fieldGrid = document.querySelector('.field-grid'); if (!label || selectedType !== 'strip') { label?.querySelector('.strip-size-mode')?.remove(); document.querySelector('.multi-strip-orders')?.remove(); if (quantityLabel) quantityLabel.hidden = false; if (current?.type === 'text') { const input = document.createElement('input'); input.id = 'productWidth'; input.type = 'number'; input.min = '1'; input.step = '1'; input.value = readStripWidths(current.value)[0] || '125'; current.replaceWith(input); } return; } if (current?.type !== 'text') { const input = document.createElement('input'); input.id = 'productWidth'; input.type = 'text'; input.inputMode = 'decimal'; input.value = current?.value || '125'; current?.replaceWith(input); } if (!label.querySelector('.strip-size-mode')) { const mode = document.createElement('div'); mode.className = 'strip-size-mode'; mode.innerHTML = '<label class="radio"><input name="stripSizeMode" value="single" type="radio" checked> 1 типоразмер</label><label class="radio"><input name="stripSizeMode" value="multiple" type="radio"> Несколько типоразмеров</label>'; label.insertBefore(mode, $('productWidth')); mode.querySelectorAll('input').forEach(input => input.addEventListener('change', () => updateStripSizeControl())); } const multiple = getRadio('stripSizeMode') === 'multiple'; const updateWidthLabel = () => { label.firstChild.textContent = multiple ? 'Ширины лент, мм' : readStripWidths($('productWidth')?.value).length > 1 ? 'Варианты ширины ленты, мм' : 'Ширина готового изделия, мм'; }; updateWidthLabel(); label.hidden = multiple; if (quantityLabel) quantityLabel.hidden = multiple; $('productWidth').placeholder = multiple ? '' : 'Например, 184,5/249,5'; if (!multiple && $('productWidth').dataset.alternativesBound !== '1') { $('productWidth').dataset.alternativesBound = '1'; $('productWidth').addEventListener('input', updateWidthLabel); } if (!fieldGrid) return; let ordersBox = document.querySelector('.multi-strip-orders'); if (!ordersBox) { ordersBox = document.createElement('div'); ordersBox.className = 'multi-strip-orders'; fieldGrid.after(ordersBox); } ordersBox.hidden = !multiple; if (!multiple) return; if (!ordersBox.querySelector('.multi-strip-row')) { const initialWidth = Number($('productWidth').value) || 125, initialQuantity = Number($('quantity').value) || 1; ordersBox.innerHTML = `<div class="multi-strip-heading"><strong>Типоразмеры и объём заказа</strong><span>Для каждой ширины укажите нужный вес или метраж</span></div><div class="multi-strip-rows"></div><button class="button ghost multi-strip-add" type="button">+ Добавить типоразмер</button>`; const rows = ordersBox.querySelector('.multi-strip-rows'); addStripOrderRow(rows, initialWidth, initialQuantity); ordersBox.querySelector('.multi-strip-add').addEventListener('click', () => addStripOrderRow(rows, '', '')); } }
 function addStripOrderRow(container, width = '', quantity = '') { const row = document.createElement('div'); row.className = 'multi-strip-row'; row.innerHTML = `<label>Ширина, мм<input class="multi-strip-width" type="number" min="1" step="1" value="${width}" placeholder="Например, 163"></label><label>Количество<input class="multi-strip-quantity" type="number" min="0.001" step="0.001" value="${quantity}" placeholder="Вес или метры"></label><button class="button ghost multi-strip-remove" type="button" aria-label="Удалить типоразмер">×</button>`; row.querySelector('.multi-strip-remove').addEventListener('click', () => { if (container.children.length > 1) row.remove(); }); container.appendChild(row); }
 function readStripOrders() { return [...document.querySelectorAll('.multi-strip-row')].map(row => ({ width: Number(row.querySelector('.multi-strip-width')?.value), quantity: Number(row.querySelector('.multi-strip-quantity')?.value) })).filter(order => Number.isFinite(order.width) && order.width > 0 && Number.isFinite(order.quantity) && order.quantity > 0); }
-function stripLayoutScore(layout, orders) { const desired = new Map(); orders.forEach(order => desired.set(order.width, (desired.get(order.width) || 0) + order.quantity)); const desiredTotal = [...desired.values()].reduce((sum, value) => sum + value, 0); const used = layout.widths.reduce((sum, width) => sum + width, 0); return [...desired.entries()].reduce((score, [width, amount]) => score + Math.abs(amount / desiredTotal - layout.widths.filter(item => item === width).reduce((sum, item) => sum + item, 0) / used), 0); }
+function stripLayoutMatch(layout, orders, unit, thickness, length, coilWidth) {
+  const targets = new Map();
+  for (const order of orders) {
+    const tons = quantityToTons(order.quantity, unit, thickness, order.width, length);
+    targets.set(order.width, (targets.get(order.width) || 0) + tons);
+  }
+  const finished = [...targets.values()].reduce((sum, tons) => sum + tons, 0);
+  const used = layout.widths.reduce((sum, width) => sum + width, 0);
+  const sourceVolume = finished * coilWidth / used;
+  const requestedWeights = [...targets].map(([width, tons]) => ({ width, tons }));
+  const score = requestedWeights.reduce((sum, item) => {
+    const count = layout.widths.filter(width => Math.abs(width - item.width) < 1e-8).length;
+    return sum + Math.abs(sourceVolume * count * item.width / coilWidth - item.tons) / item.tons;
+  }, 0);
+  return { sourceVolume, requestedWeights, score };
+}
 function setType(type) { selectedType = type; addOpenModeField(); updateRewindWidthControl(); document.querySelectorAll('label').forEach(label => { if (label.firstChild) label.firstChild.textContent = label.firstChild.textContent.replace(/руб\/т(?!н)/, 'руб/тн'); }); document.querySelectorAll('.type-card').forEach(card => card.classList.toggle('selected', card.dataset.type === type)); $('paramsTitle').textContent = `Параметры ${typeNames[type]}`; document.querySelector('.length-field').hidden = type === 'strip' || type === 'rewind'; updateStripSizeControl(); updateUnits(); }
 function thicknessBand(t) { return t <= .6 ? 0 : t <= .8 ? 1 : t <= 1 ? 2 : t <= 1.5 ? 3 : t <= 3 ? 4 : t <= 5 ? 5 : -1; }
 function grindingPrice(type, thickness, volume, mode) { const band = PRICE.grinding.roll[thicknessBand(thickness)]; return band ? band[mode] * Math.max(volume, PRICE.grinding.rollMinTons) / volume : 0; }
@@ -196,24 +211,57 @@ function calculate() {
   ]) : [
     ...stripLayouts(width, productWidth, thickness).map(layout => serviceData(width, layout.widths, thickness, volume, price, layout.label)),
     ...subcutLayouts(width, productWidth, thickness).map(layout => serviceDataWithSubcut(width, productWidth, thickness, volume, price, layout))
-  ]) : multiStripLayouts(width, productWidths, thickness).map(layout => { const row = serviceData(width, layout.widths, thickness, volume, price, layout.label); if (row && stripSizeMode === 'multiple') row.layoutScore = stripLayoutScore(layout, stripOrders); return row; }))) : candidates.map(width => serviceData(width, productWidth, thickness, volume, price))).filter(Boolean).sort((a, b) => selectedType === 'strip' && stripSizeMode === 'multiple' ? a.layoutScore - b.layoutScore || a.total - b.total : selectedType === 'strip' && productWidths.length > 1 ? b.yieldRate - a.yieldRate || a.total - b.total : selectedType === 'card' ? a.total - b.total || b.yieldRate - a.yieldRate : a.total - b.total).filter((row, index, list) => (selectedType !== 'strip' && selectedType !== 'card') || list.findIndex(item => item.coilWidth === row.coilWidth) === index).slice(0, selectedType === 'strip' || selectedType === 'card' ? COIL_WIDTHS.length : 5); if (!rows.length) { error.textContent = 'По условиям прайса подходящего варианта нет: проверьте ширину, толщину, количество полос и откройник.'; error.hidden = false; return; }
+  ]) : multiStripLayouts(width, productWidths, thickness).map(layout => {
+    const match = stripLayoutMatch(layout, stripOrders, unit, thickness, length, width);
+    const row = serviceData(width, layout.widths, thickness, match.sourceVolume, price, layout.label);
+    if (row) Object.assign(row, { layoutScore: match.score, sourceVolume: match.sourceVolume, requestedWeights: match.requestedWeights });
+    return row;
+  }))) : candidates.map(width => serviceData(width, productWidth, thickness, volume, price))).filter(Boolean).sort((a, b) => selectedType === 'strip' && stripSizeMode === 'multiple' ? (Math.abs(a.layoutScore - b.layoutScore) > 1e-9 ? a.layoutScore - b.layoutScore : b.yieldRate - a.yieldRate || a.total - b.total) : selectedType === 'strip' && productWidths.length > 1 ? b.yieldRate - a.yieldRate || a.total - b.total : selectedType === 'card' ? a.total - b.total || b.yieldRate - a.yieldRate : a.total - b.total).filter((row, index, list) => (selectedType !== 'strip' && selectedType !== 'card') || list.findIndex(item => item.coilWidth === row.coilWidth) === index).slice(0, selectedType === 'strip' || selectedType === 'card' ? COIL_WIDTHS.length : 5); if (!rows.length) { error.textContent = 'По условиям прайса подходящего варианта нет: проверьте ширину, толщину, количество полос и откройник.'; error.hidden = false; return; }
   const productLabel = selectedType === 'strip' && stripSizeMode === 'multiple' ? stripOrders.map(order => `${fullNomenclature(selectedType, thickness, order.width)} — ${decimal(order.quantity)} ${unit === 'tons' ? 'т' : 'м'}`).join('<br>') : selectedType === 'strip' && productWidths.length > 1 ? `${productWidths.map(width => `${decimal(width)} мм`).join(' / ')} · ${decimal(thickness)} мм` : fullNomenclature(selectedType, thickness, productWidth, length), paymentLabel = getRadio('paymentTerms') === 'deferment' ? 'Отсрочка' : 'Предоплата', monthLabel = $('deliveryMonth')?.selectedOptions[0]?.textContent || ''; $('resultCaption').innerHTML = `<strong>${productLabel}</strong> · объём ${decimal(volume)} т · ${getRadio('surface') === '4n' ? 'Шлифовка' : 'Без шлифовки'} · ${paymentLabel}${monthLabel ? ` · поставка: ${monthLabel}` : ''}`;
-  const best = rows[0]; document.querySelector('#resultsStep thead th:nth-child(5)')?.classList.add('yield-col'); document.querySelector('.table-wrap').hidden = selectedType === 'sheet' || selectedType === 'rewind'; document.querySelectorAll('.scrap-col,.scrap-cell').forEach(el => el.hidden = selectedType === 'sheet' || selectedType === 'rewind'); document.querySelectorAll('.orientation-col,.orientation-cell').forEach(el => el.hidden = selectedType !== 'card'); $('recommendation').innerHTML = `${selectedType === 'sheet' ? 'Лист' : selectedType === 'rewind' ? 'Рулон' : 'Рекомендуемый рулон:'} <strong>${best.coilWidth} мм</strong>${(selectedType === 'card' || selectedType === 'strip') && best.cardSize ? ` · раскрой ${prettyLayout(best.cardSize)}` : ''}<span>Маршрут: ${best.operations.map(item => item.name.replace(/^\d\. /, '')).join(' → ')}</span>`;
-  $('resultsBody').innerHTML = rows.map((row, index) => `<tr class="${index === 0 ? 'best' : ''}"><td><strong>${row.coilWidth} мм</strong>${index === 0 ? '<em>лучший</em>' : ''}${selectedType === 'strip' || selectedType === 'card' ? cutPlanHtml(row, length) : ''}</td><td class="orientation-cell">${prettyLayout(row.cardSize)}</td><td>${prettyLayout(row.cardSize) || row.pieces}</td><td class="scrap-cell">${decimal(row.scrap)} мм / ${pct((1 - row.yieldRate) * 100)}${row.subcutScrapTotal ? `<small> (${decimal(row.sourceScrap)} + ${row.subcuts}×${PRICE.longitudinal.minScrap})</small>` : ''}</td><td class="yield-cell">${pct(row.yieldRate * 100)}</td><td><strong>${money(row.total)} руб/тн</strong></td></tr>`).join('');
+  const best = rows[0];
+  document.querySelector('#resultsStep thead tr').innerHTML = selectedType === 'strip'
+    ? '<th>Исходный рулон</th><th>Раскрой</th><th>Вес готовых лент</th><th>Откройник</th><th>Итоговая цена</th>'
+    : '<th>Исходный рулон</th><th class="orientation-col">Направление карточки</th><th>Полос / листов</th><th class="scrap-col">Откройник</th><th class="yield-col">Выход</th><th>Итоговая цена</th>';
+  if (selectedType === 'strip' && stripSizeMode === 'multiple')
+    $('resultCaption').innerHTML = $('resultCaption').innerHTML.replace(/ · объём [\d\s,.]+ т/, ` · заказ ${stripTons(volume)} т готовой ленты · исходный рулон ${stripTons(best.sourceVolume)} т`); document.querySelector('.table-wrap').hidden = selectedType === 'sheet' || selectedType === 'rewind'; document.querySelectorAll('.scrap-col,.scrap-cell').forEach(el => el.hidden = selectedType === 'sheet' || selectedType === 'rewind'); document.querySelectorAll('.orientation-col,.orientation-cell').forEach(el => el.hidden = selectedType !== 'card'); $('recommendation').innerHTML = `${selectedType === 'sheet' ? 'Лист' : selectedType === 'rewind' ? 'Рулон' : 'Рекомендуемый рулон:'} <strong>${best.coilWidth} мм</strong>${(selectedType === 'card' || selectedType === 'strip') && best.cardSize ? ` · раскрой ${prettyLayout(best.cardSize)}` : ''}<span>Маршрут: ${best.operations.map(item => item.name.replace(/^\d\. /, '')).join(' → ')}</span>`;
+  $('resultsBody').innerHTML = rows.map((row, index) => {
+    const coil = `<strong>${row.coilWidth} мм</strong>${index === 0 ? '<em>лучший</em>' : ''}${selectedType === 'strip' || selectedType === 'card' ? cutPlanHtml(row, length) : ''}`;
+    const scrap = `${decimal(row.scrap)} мм / ${pct((1 - row.yieldRate) * 100)}${row.subcutScrapTotal ? `<small> (${decimal(row.sourceScrap)} + ${row.subcuts}×${PRICE.longitudinal.minScrap})</small>` : ''}`;
+    const priceCell = `<strong>${money(row.total)} руб/тн</strong>`;
+    if (selectedType === 'strip') {
+      const source = row.sourceVolume ? `<small class="strip-source-weight">Исходный металл: ${stripTons(row.sourceVolume)} т</small>` : '';
+      return `<tr class="${index === 0 ? 'best' : ''}"><td>${coil}${source}</td><td>${prettyLayout(row.cardSize) || row.pieces}</td><td>${actualWeightText(row, volume)}</td><td>${scrap}</td><td>${priceCell}</td></tr>`;
+    }
+    return `<tr class="${index === 0 ? 'best' : ''}"><td>${coil}</td><td class="orientation-cell">${prettyLayout(row.cardSize)}</td><td>${prettyLayout(row.cardSize) || row.pieces}</td><td class="scrap-cell">${scrap}</td><td class="yield-cell">${pct(row.yieldRate * 100)}</td><td>${priceCell}</td></tr>`;
+  }).join('');
   const operationLines = best.operations.map(operation => `<div class="subline"><span>${operation.name}${operation.name === 'Плёнка' ? '' : ` <small>(${operation.mode})</small>`}</span><strong>${money(operation.price)} руб/тн</strong></div>`).join(''); $('priceBreakdown').innerHTML = `<h3>Итоговая цена: ${money(best.total)} руб/тн с НДС</h3><div class="price-lines"><div><span>Прайс</span><strong>${money(best.price)} руб/тн</strong></div><div><span>Переработка</span><strong>${money(best.processing)} руб/тн</strong></div>${operationLines}<div><span>Откройник от себестоимости</span><strong>${best.scrapCost ? money(best.scrapCost) + ' руб/тн' : '—'}</strong></div><div class="grand"><span>ИТОГО</span><strong>${money(best.total)} руб/тн</strong></div></div>`;
   $('note').textContent = selectedType === 'card' && getRadio('surface') === '4n' ? 'Карточки: сначала шлифовка, затем продольная резка в ленту и поперечная резка открытого рулона до конца.' : selectedType === 'card' ? 'Карточки: сначала продольная резка в ленту, затем поперечная резка открытого рулона до конца.' : selectedType === 'sheet' && getRadio('surface') === '4n' ? 'Шлифованный лист: сначала шлифовка, затем поперечная резка открытого рулона до конца.' : selectedType === 'rewind' ? 'Рулон рассчитан как отдельная операция перемотки без продольного раскроя.' : 'Автоматически применены условия прайса по режиму рулона, минимальному объёму и дальнейшей переработке.';
-  const customMinWidth = selectedType === 'strip' && stripSizeMode === 'multiple' ? productWidths.reduce((sum, width) => sum + width, 0) : productWidth, customProductWidth = selectedType === 'strip' && stripSizeMode === 'multiple' && productWidths.length > 1 ? productWidths : productWidth; const custom = document.createElement('tr'); custom.className = 'custom-row'; custom.innerHTML = `<td><input id="customCoilWidth" type="number" min="${customMinWidth}" step="1" placeholder="Своя ширина"></td><td class="orientation-cell"${selectedType === 'card' ? '' : ' hidden'}>${selectedType === 'card' ? 'Ориентация задаётся в таблице' : ''}</td><td colspan="${selectedType === 'sheet' || selectedType === 'rewind' ? 3 : 4}" id="customResult">Введите ширину — расчёт появится автоматически</td>`; $('resultsBody').appendChild(custom); $('customCoilWidth').addEventListener('input', () => renderCustom(Number($('customCoilWidth').value), thickness, customProductWidth, volume, price));
+  const customMinWidth = selectedType === 'strip' && stripSizeMode === 'multiple' ? productWidths.reduce((sum, width) => sum + width, 0) : productWidth, customProductWidth = selectedType === 'strip' && stripSizeMode === 'multiple' && productWidths.length > 1 ? productWidths : productWidth; const custom = document.createElement('tr'); custom.className = 'custom-row'; custom.innerHTML = `<td><input id="customCoilWidth" type="number" min="${customMinWidth}" step="1" placeholder="Своя ширина"></td>${selectedType === 'strip' ? '' : `<td class="orientation-cell"${selectedType === 'card' ? '' : ' hidden'}>${selectedType === 'card' ? 'Ориентация задаётся в таблице' : ''}</td>`}<td colspan="${selectedType === 'strip' ? 4 : selectedType === 'sheet' || selectedType === 'rewind' ? 3 : 4}" id="customResult">Введите ширину — расчёт появится автоматически</td>`; $('resultsBody').appendChild(custom); $('customCoilWidth').addEventListener('input', () => renderCustom(Number($('customCoilWidth').value), thickness, customProductWidth, volume, price));
   lastCalculation = { rows, best, volume, thickness, length, materialCost, unit, stripOrders, stripSizeMode, productWidths, alternativeWidths, paymentTerms: getRadio('paymentTerms'), deliveryMonth: $('deliveryMonth')?.value || '' };
-  adjustStripResultsTable();
   localStorage.setItem('metal-cutter-values', JSON.stringify({ type: selectedType, thickness, productWidth: productWidthRaw, stripSizeMode, stripOrders, length, quantity, unit, volume, materialCost, price, surface: getRadio('surface'), film, filmSides, openMode: getRadio('openMode'), paymentTerms: getRadio('paymentTerms'), deliveryMonth: $('deliveryMonth')?.value || '' }));
 }
 function renderCustom(coilWidth, thickness, productWidth, volume, price) {
-  const out = $('customResult'), widths = Array.isArray(productWidth) ? productWidth : [productWidth], minWidth = widths.reduce((sum, width) => sum + width, 0);
+  const out = $('customResult'), widths = Array.isArray(productWidth) ? productWidth : [productWidth];
+  const minWidth = widths.reduce((sum, width) => sum + width, 0);
   if (!coilWidth || coilWidth < minWidth) { out.textContent = 'Введите ширину не меньше суммы типоразмеров'; return; }
   const layouts = selectedType === 'strip' ? multiStripLayouts(coilWidth, widths, thickness) : [];
-  const layout = layouts.at(-1);
-  const row = serviceData(coilWidth, layout ? layout.widths : productWidth, thickness, volume, price, layout?.label || '');
+  const multi = selectedType === 'strip' && lastCalculation?.stripSizeMode === 'multiple';
+  const alternatives = layouts.map(layout => ({
+    layout,
+    match: multi ? stripLayoutMatch(layout, lastCalculation.stripOrders, lastCalculation.unit, thickness, lastCalculation.length, coilWidth) : null
+  }));
+  const used = item => item.layout.widths.reduce((sum, width) => sum + width, 0);
+  alternatives.sort((a, b) =>
+    multi && Math.abs(a.match.score - b.match.score) > 1e-9 ? a.match.score - b.match.score : used(b) - used(a)
+  );
+  const chosen = alternatives[0], layout = chosen?.layout;
+  const rawVolume = chosen?.match?.sourceVolume ?? volume;
+  const row = serviceData(coilWidth, layout ? layout.widths : productWidth, thickness, rawVolume, price, layout?.label || '');
   if (!row) { out.textContent = 'Вариант не проходит по условиям прайса или минимальному откройнику'; return; }
+  if (chosen?.match) {
+    row.sourceVolume = chosen.match.sourceVolume;
+    row.requestedWeights = chosen.match.requestedWeights;
+  }
   const weights = selectedType === 'strip' ? `<div class="custom-strip-weight">Расчётный вес готовых лент: ${actualWeightText(row, volume)}</div>` : '';
   out.innerHTML = `${decimal(coilWidth)} мм · ${prettyLayout(row.cardSize) || row.pieces} полос / листов${selectedType === 'sheet' || selectedType === 'rewind' ? '' : ` · откройник <strong>${decimal(row.scrap)} мм</strong>`} · переработка ${money(row.processing)} руб/тн · откройник от себестоимости ${money(row.scrapCost)} руб/тн · <strong>${money(row.total)} руб/тн</strong>${weights}`;
 }
@@ -284,10 +332,10 @@ function layoutWeightItems(row, reelTons) {
     }
   }
   return [...counts.entries()].map(([width, count]) => ({
-    width, count, tons: reelTons * width * count / row.coilWidth
+    width, count, tons: (row?.sourceVolume ?? reelTons) * width * count / row.coilWidth
   }));
 }
- function renderActualStripWeight() { const calculation = lastCalculation, weightBox = document.querySelector('.theoretical-weight'); if (!calculation || !weightBox) return; const selected = calculation.rows?.[Number($('layoutSelect')?.value) || 0] || calculation.best, items = layoutWeightItems(selected, calculation.volume); if (!items.length) return; const actualVolume = items.reduce((sum, item) => sum + item.tons, 0); calculation.actualVolume = actualVolume; weightBox.innerHTML = `<span>Фактический вес лент из рулона ${decimal(calculation.volume)} т</span><strong>${items.map(item => `${item.count}×${decimal(item.width)} мм — ${decimal(item.tons)} т всего`).join('<br>')}</strong>`; const caption = $('resultCaption'); if (caption) caption.innerHTML = caption.innerHTML.replace(/объём\s+[\d\s,.]+\s*т/, `фактический вес ${decimal(actualVolume)} т`); $('note').hidden = true; }
+ function renderActualStripWeight() { const calculation = lastCalculation, weightBox = document.querySelector('.theoretical-weight'); if (!calculation || !weightBox) return; const selected = calculation.rows?.[Number($('layoutSelect')?.value) || 0] || calculation.best, items = layoutWeightItems(selected, calculation.volume); if (!items.length) return; const actualVolume = items.reduce((sum, item) => sum + item.tons, 0); calculation.actualVolume = actualVolume; weightBox.innerHTML = `<span>Фактический вес лент из рулона ${decimal(selected.sourceVolume ?? calculation.volume)} т</span><strong>${items.map(item => `${item.count}×${decimal(item.width)} мм — ${decimal(item.tons)} т всего`).join('<br>')}</strong>`; const caption = $('resultCaption'); if (caption) caption.innerHTML = caption.innerHTML.replace(/объём\s+[\d\s,.]+\s*т/, `фактический вес ${decimal(actualVolume)} т`); $('note').hidden = true; }
  $('calculateButton').addEventListener('click', () => { $('note').hidden = true; setTimeout(renderActualStripWeight, 0); });
  new MutationObserver(() => { const select = $('layoutSelect'); if (select && select.dataset.weightBound !== '1') { select.dataset.weightBound = '1'; select.addEventListener('change', renderActualStripWeight); } }).observe(document.body, { childList: true });
 function stripTons(value) {
@@ -297,33 +345,14 @@ function actualWeightText(row, reelTons) {
   const items = layoutWeightItems(row, reelTons);
   if (!items.length) return `${stripTons(reelTons * (row?.yieldRate || 1))} т`;
   const total = items.reduce((sum, item) => sum + item.tons, 0);
-  return `<div class="strip-weight-list">${items.map(item =>
-    `<div class="strip-weight-item"><span>${decimal(item.width)} мм × ${item.count}</span><strong>${stripTons(item.tons)} т</strong><small>по ${stripTons(item.tons / item.count)} т/ленту</small></div>`
-  ).join('')}<div class="strip-weight-total">Итого: ${stripTons(total)} т</div></div>`;
+  return `<div class="strip-weight-list">${items.map(item => {
+    const target = row.requestedWeights?.find(target => Math.abs(target.width - item.width) < 1e-8);
+    const deviation = target ? item.tons - target.tons : 0;
+    const targetText = target ? `<small>заказ ${stripTons(target.tons)} т · откл. ${deviation >= 0 ? '+' : ''}${stripTons(deviation)} т</small>` : '';
+    return `<div class="strip-weight-item"><span>${decimal(item.width)} мм × ${item.count}</span><strong>${stripTons(item.tons)} т</strong><small>по ${stripTons(item.tons / item.count)} т/ленту</small>${targetText}</div>`;
+  }).join('')}<div class="strip-weight-total">Итого: ${stripTons(total)} т</div></div>`;
 }
-function adjustStripResultsTable() {
-  const headers = document.querySelectorAll('#resultsStep thead th');
-  const isStrip = selectedType === 'strip';
-  if (headers[2]) headers[2].textContent = isStrip ? 'Раскрой' : 'Полос / листов';
-  if (headers[3]) headers[3].textContent = isStrip ? 'Вес готовых лент' : 'Откройник';
-  if (headers[4]) {
-    headers[4].textContent = isStrip ? 'Откройник' : 'Выход';
-    // Убираем старый CSS-класс, скрывающий колонку «Выход».
-    headers[4].classList.toggle('yield-col', !isStrip);
-  }
-  document.querySelectorAll('#resultsBody tr:not(.custom-row)').forEach((tr, index) => {
-    const cells = tr.querySelectorAll('td');
-    if (cells.length < 6) return;
-    cells[4].classList.toggle('yield-cell', !isStrip);
-    if (!isStrip) return;
-    const row = lastCalculation?.rows?.[index];
-    if (!row) return;
-    cells[2].innerHTML = prettyLayout(row.cardSize) || `${row.pieces} полос`;
-    cells[3].innerHTML = actualWeightText(row, lastCalculation.volume);
-    cells[4].innerHTML = `${decimal(row.scrap)} мм / ${pct((1 - row.yieldRate) * 100)}${row.subcutScrapTotal ? `<small> (${decimal(row.sourceScrap)} + ${row.subcuts}×${PRICE.longitudinal.minScrap})</small>` : ''}`;
-  });
-}
-  // Вызов встроен в calculate(): иначе перехват клика может пропустить обновление таблицы.
+// Вызов встроен в calculate(): иначе перехват клика может пропустить обновление таблицы.
   ensurePurchaseButton(); setupDeliveryMonths(); bindExcelExport();
 
   // Инициализируем локальные позиции до необязательного Excel-модуля.
