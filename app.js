@@ -87,7 +87,7 @@ function serviceData(coilWidth, productWidth, thickness, volume, price, cardSize
   let secondCut = 0; if (selectedType === 'sheet' || selectedType === 'card') { const cutMode = modeForNextOperation(operations, openCutMode); secondCut = charge(PRICE.crossCut[cutMode], volume, PRICE.crossCut.minTons, cutMode); if ($('specialConditions')?.checked) secondCut += PRICE.crossCut.special; if ($('noPallet')?.checked) secondCut = Math.max(0, secondCut - 500); operations.push({ name: selectedType === 'card' ? (hasGrinding ? '3. Поперечная резка в карточки' : '2. Поперечная резка в карточки') : hasGrinding ? '2. Поперечная резка в лист' : '1. Поперечная резка в лист', mode: cutMode === 'open' ? 'открытый рулон до конца' : cutMode === 'full' ? 'полный рулон' : 'частичный рулон', price: secondCut }); } else if ($('noPallet')?.checked) firstCut = Math.max(0, firstCut - 500);
   const film = filmPrice(selectedType, thickness, yieldRate, coilWidth); if (film) operations.push({ name: 'Плёнка', mode: getRadio('filmSides') === 'two' ? 'с двух сторон' : 'с одной стороны', price: film });
   const materialCost = numericInputValue($('materialCost').value), effectiveMaterial = materialCost / yieldRate, scrapCost = materialCost * (1 - yieldRate) / yieldRate, processing = operations.reduce((sum, item) => sum + item.price, 0);
-  return { coilWidth, pieces, scrap, yieldRate, price, cardSize, effectiveMaterial, scrapCost, cutting: firstCut + secondCut, firstCut, secondCut, grinding, film, processing, total: price + processing + scrapCost, mode, operations };
+  return { coilWidth, pieces, scrap, yieldRate, price, cardSize, layoutWidths: laneWidths, effectiveMaterial, scrapCost, cutting: firstCut + secondCut, firstCut, secondCut, grinding, film, processing, total: price + processing + scrapCost, mode, operations };
 }
 
 function cardLayouts(coilWidth, firstWidth, secondWidth, thickness) {
@@ -204,9 +204,19 @@ function calculate() {
   $('note').textContent = selectedType === 'card' && getRadio('surface') === '4n' ? 'Карточки: сначала шлифовка, затем продольная резка в ленту и поперечная резка открытого рулона до конца.' : selectedType === 'card' ? 'Карточки: сначала продольная резка в ленту, затем поперечная резка открытого рулона до конца.' : selectedType === 'sheet' && getRadio('surface') === '4n' ? 'Шлифованный лист: сначала шлифовка, затем поперечная резка открытого рулона до конца.' : selectedType === 'rewind' ? 'Рулон рассчитан как отдельная операция перемотки без продольного раскроя.' : 'Автоматически применены условия прайса по режиму рулона, минимальному объёму и дальнейшей переработке.';
   const customMinWidth = selectedType === 'strip' && stripSizeMode === 'multiple' ? productWidths.reduce((sum, width) => sum + width, 0) : productWidth, customProductWidth = selectedType === 'strip' && stripSizeMode === 'multiple' && productWidths.length > 1 ? productWidths : productWidth; const custom = document.createElement('tr'); custom.className = 'custom-row'; custom.innerHTML = `<td><input id="customCoilWidth" type="number" min="${customMinWidth}" step="1" placeholder="Своя ширина"></td><td class="orientation-cell"${selectedType === 'card' ? '' : ' hidden'}>${selectedType === 'card' ? 'Ориентация задаётся в таблице' : ''}</td><td colspan="${selectedType === 'sheet' || selectedType === 'rewind' ? 3 : 4}" id="customResult">Введите ширину — расчёт появится автоматически</td>`; $('resultsBody').appendChild(custom); $('customCoilWidth').addEventListener('input', () => renderCustom(Number($('customCoilWidth').value), thickness, customProductWidth, volume, price));
   lastCalculation = { rows, best, volume, thickness, length, materialCost, unit, stripOrders, stripSizeMode, productWidths, alternativeWidths, paymentTerms: getRadio('paymentTerms'), deliveryMonth: $('deliveryMonth')?.value || '' };
+  adjustStripResultsTable();
   localStorage.setItem('metal-cutter-values', JSON.stringify({ type: selectedType, thickness, productWidth: productWidthRaw, stripSizeMode, stripOrders, length, quantity, unit, volume, materialCost, price, surface: getRadio('surface'), film, filmSides, openMode: getRadio('openMode'), paymentTerms: getRadio('paymentTerms'), deliveryMonth: $('deliveryMonth')?.value || '' }));
 }
-function renderCustom(coilWidth, thickness, productWidth, volume, price) { const out = $('customResult'), widths = Array.isArray(productWidth) ? productWidth : [productWidth], minWidth = widths.reduce((sum, width) => sum + width, 0); if (!coilWidth || coilWidth < minWidth) { out.textContent = 'Введите ширину не меньше суммы типоразмеров'; return; } const layouts = selectedType === 'strip' ? multiStripLayouts(coilWidth, widths, thickness) : [], layout = layouts.at(-1), row = serviceData(coilWidth, layout ? layout.widths : productWidth, thickness, volume, price, layout?.label || ''); if (!row) { out.textContent = 'Вариант не проходит по условиям прайса или минимальному откройнику'; return; } out.innerHTML = `${decimal(coilWidth)} мм · ${prettyLayout(row.cardSize) || row.pieces} полос / листов${selectedType === 'sheet' || selectedType === 'rewind' ? '' : ` · откройник <strong>${decimal(row.scrap)} мм</strong>`} · переработка ${money(row.processing)} руб/тн · откройник от себестоимости ${money(row.scrapCost)} руб/тн · <strong>${money(row.total)} руб/тн</strong>`; }
+function renderCustom(coilWidth, thickness, productWidth, volume, price) {
+  const out = $('customResult'), widths = Array.isArray(productWidth) ? productWidth : [productWidth], minWidth = widths.reduce((sum, width) => sum + width, 0);
+  if (!coilWidth || coilWidth < minWidth) { out.textContent = 'Введите ширину не меньше суммы типоразмеров'; return; }
+  const layouts = selectedType === 'strip' ? multiStripLayouts(coilWidth, widths, thickness) : [];
+  const layout = layouts.at(-1);
+  const row = serviceData(coilWidth, layout ? layout.widths : productWidth, thickness, volume, price, layout?.label || '');
+  if (!row) { out.textContent = 'Вариант не проходит по условиям прайса или минимальному откройнику'; return; }
+  const weights = selectedType === 'strip' ? `<div class="custom-strip-weight">Расчётный вес готовых лент: ${actualWeightText(row, volume)}</div>` : '';
+  out.innerHTML = `${decimal(coilWidth)} мм · ${prettyLayout(row.cardSize) || row.pieces} полос / листов${selectedType === 'sheet' || selectedType === 'rewind' ? '' : ` · откройник <strong>${decimal(row.scrap)} мм</strong>`} · переработка ${money(row.processing)} руб/тн · откройник от себестоимости ${money(row.scrapCost)} руб/тн · <strong>${money(row.total)} руб/тн</strong>${weights}`;
+}
 document.querySelectorAll('.type-card').forEach(card => card.addEventListener('click', () => setType(card.dataset.type))); $('nextButton').addEventListener('click', () => showStep(2)); $('backButton').addEventListener('click', () => showStep(1)); $('calculateButton').addEventListener('click', () => { calculate(); if (!$('error').hidden) return; showStep(3); }); $('editButton').addEventListener('click', () => showStep(2)); $('resetButton').addEventListener('click', () => { localStorage.removeItem('metal-cutter-values'); location.reload(); });
 $('backButton').addEventListener('click', event => { event.stopImmediatePropagation(); localStorage.removeItem('metal-cutter-values'); location.reload(); }, true);
 setupDeliveryMonths(); try { const saved = JSON.parse(localStorage.getItem('metal-cutter-values') || 'null'); if (saved) { setType(saved.type || 'strip'); ['thickness', 'productWidth', 'productLength', 'quantity', 'materialCost', 'price'].forEach(id => { if (saved[id] !== undefined) $(id).value = saved[id]; }); document.querySelector(`input[name="stripSizeMode"][value="${saved.stripSizeMode || 'single'}"]`)?.click(); if (saved.stripSizeMode === 'multiple' && Array.isArray(saved.stripOrders)) { const rows = document.querySelector('.multi-strip-rows'); if (rows) { rows.innerHTML = ''; saved.stripOrders.forEach(order => addStripOrderRow(rows, order.width, order.quantity)); } } document.querySelector(`input[name="unit"][value="${saved.unit}"]`)?.click(); document.querySelector(`input[name="surface"][value="${saved.surface}"]`)?.click(); document.querySelector(`input[name="film"][value="${saved.film}"]`)?.click(); document.querySelector(`input[name="filmSides"][value="${saved.filmSides}"]`)?.click(); document.querySelector(`input[name="openMode"][value="${saved.openMode || 'partial'}"]`)?.click(); document.querySelector(`input[name="paymentTerms"][value="${saved.paymentTerms || 'prepayment'}"]`)?.click(); if (saved.deliveryMonth) $('deliveryMonth').value = saved.deliveryMonth; } } catch {} setType(selectedType); showStep(1);
@@ -260,13 +270,60 @@ async function exportPurchaseCalculationToExcel(file) { if (!lastCalculation || 
   new MutationObserver(() => { if ($('purchaseModal')) { bindPurchaseExcelExport(); syncPurchasePaymentChoice(); } }).observe(document.body, { childList: true });
 $('calculateButton').addEventListener('click', () => { if (!$('error').hidden) return; $('resultCaption').innerHTML = $('resultCaption').innerHTML.replace(/ · (?:Без шлифовки|Шлифовка) · (?:Предоплата|Отсрочка).*$/s, ''); });
 $('calculateButton').addEventListener('click', () => { if (!$('error').hidden || !lastCalculation) return; const items = lastCalculation.stripSizeMode === 'multiple' ? lastCalculation.stripOrders.map(order => ({ width: order.width, tons: quantityToTons(order.quantity, lastCalculation.unit, lastCalculation.thickness, order.width, lastCalculation.length) })) : [{ width: Number($('productWidth').value), tons: lastCalculation.volume }]; const weightText = items.map(item => `${decimal(item.width)} мм — ${decimal(item.tons)} т`).join('<br>'); $('priceBreakdown').insertAdjacentHTML('afterbegin', `<div class="theoretical-weight"><span>Теоретический вес готовой продукции</span><strong>${weightText}</strong></div>`); });
- function layoutWeightItems(row, reelTons) { const groups = String(row?.cardSize || '').matchAll(/(\d+)[×x](\d+(?:[,.]\d+)?)\s*мм/g), items = []; for (const match of groups) { const count = Number(match[1]), width = Number(match[2].replace(',', '.')); if (count > 0 && width > 0) items.push({ count, width, tons: reelTons * count * width / row.coilWidth }); } return items; }
+function layoutWeightItems(row, reelTons) {
+  // Ширины готовой ленты группируются: 2×150 мм + 2×310 мм.
+  const counts = new Map();
+  for (const match of String(row?.cardSize || '').matchAll(/(\d+)[×x](\d+(?:[,.]\d+)?)\s*мм/g)) {
+    const count = Number(match[1]), width = Number(match[2].replace(',', '.'));
+    if (count > 0 && width > 0) counts.set(width, (counts.get(width) || 0) + count);
+  }
+  // Для произвольной ширины, когда раскрой передан массивом полос.
+  if (!counts.size && Array.isArray(row?.layoutWidths)) {
+    for (const width of row.layoutWidths) {
+      if (Number.isFinite(width) && width > 0) counts.set(width, (counts.get(width) || 0) + 1);
+    }
+  }
+  return [...counts.entries()].map(([width, count]) => ({
+    width, count, tons: reelTons * width * count / row.coilWidth
+  }));
+}
  function renderActualStripWeight() { const calculation = lastCalculation, weightBox = document.querySelector('.theoretical-weight'); if (!calculation || !weightBox) return; const selected = calculation.rows?.[Number($('layoutSelect')?.value) || 0] || calculation.best, items = layoutWeightItems(selected, calculation.volume); if (!items.length) return; const actualVolume = items.reduce((sum, item) => sum + item.tons, 0); calculation.actualVolume = actualVolume; weightBox.innerHTML = `<span>Фактический вес лент из рулона ${decimal(calculation.volume)} т</span><strong>${items.map(item => `${item.count}×${decimal(item.width)} мм — ${decimal(item.tons)} т всего`).join('<br>')}</strong>`; const caption = $('resultCaption'); if (caption) caption.innerHTML = caption.innerHTML.replace(/объём\s+[\d\s,.]+\s*т/, `фактический вес ${decimal(actualVolume)} т`); $('note').hidden = true; }
  $('calculateButton').addEventListener('click', () => { $('note').hidden = true; setTimeout(renderActualStripWeight, 0); });
  new MutationObserver(() => { const select = $('layoutSelect'); if (select && select.dataset.weightBound !== '1') { select.dataset.weightBound = '1'; select.addEventListener('change', renderActualStripWeight); } }).observe(document.body, { childList: true });
-  function actualWeightText(row, reelTons) { const items = layoutWeightItems(row, reelTons); return items.length ? items.map(item => `${item.count}×${decimal(item.width)} мм — ${decimal(item.tons)} т`).join('<br>') : `${decimal(reelTons * (row?.yieldRate || 1))} т`; }
-  function adjustStripResultsTable() { if (selectedType !== 'strip') return; const headers = document.querySelectorAll('#resultsStep thead th'); if (headers[1]) headers[1].hidden = true; if (headers[2]) headers[2].textContent = 'Раскрой'; if (headers[3]) headers[3].textContent = 'Фактический вес'; if (headers[4]) headers[4].textContent = 'Откройник'; lastCalculation?.rows?.forEach((row, index) => { const cells = document.querySelectorAll(`#resultsBody tr:nth-child(${index + 1}) td`); if (cells[1]) cells[1].hidden = true; if (cells[3]) cells[3].innerHTML = actualWeightText(row, lastCalculation.volume); if (cells[4]) cells[4].innerHTML = `${decimal(row.scrap)} мм / ${pct((1 - row.yieldRate) * 100)}${row.subcutScrapTotal ? `<small> (${decimal(row.sourceScrap)} + ${row.subcuts}×${PRICE.longitudinal.minScrap})</small>` : ''}`; }); }
-  $('calculateButton').addEventListener('click', () => setTimeout(adjustStripResultsTable, 0));
+function stripTons(value) {
+  return new Intl.NumberFormat('ru-RU', { minimumFractionDigits: 3, maximumFractionDigits: 3 }).format(value);
+}
+function actualWeightText(row, reelTons) {
+  const items = layoutWeightItems(row, reelTons);
+  if (!items.length) return `${stripTons(reelTons * (row?.yieldRate || 1))} т`;
+  const total = items.reduce((sum, item) => sum + item.tons, 0);
+  return `<div class="strip-weight-list">${items.map(item =>
+    `<div class="strip-weight-item"><span>${decimal(item.width)} мм × ${item.count}</span><strong>${stripTons(item.tons)} т</strong><small>по ${stripTons(item.tons / item.count)} т/ленту</small></div>`
+  ).join('')}<div class="strip-weight-total">Итого: ${stripTons(total)} т</div></div>`;
+}
+function adjustStripResultsTable() {
+  const headers = document.querySelectorAll('#resultsStep thead th');
+  const isStrip = selectedType === 'strip';
+  if (headers[2]) headers[2].textContent = isStrip ? 'Раскрой' : 'Полос / листов';
+  if (headers[3]) headers[3].textContent = isStrip ? 'Вес готовых лент' : 'Откройник';
+  if (headers[4]) {
+    headers[4].textContent = isStrip ? 'Откройник' : 'Выход';
+    // Убираем старый CSS-класс, скрывающий колонку «Выход».
+    headers[4].classList.toggle('yield-col', !isStrip);
+  }
+  document.querySelectorAll('#resultsBody tr:not(.custom-row)').forEach((tr, index) => {
+    const cells = tr.querySelectorAll('td');
+    if (cells.length < 6) return;
+    cells[4].classList.toggle('yield-cell', !isStrip);
+    if (!isStrip) return;
+    const row = lastCalculation?.rows?.[index];
+    if (!row) return;
+    cells[2].innerHTML = prettyLayout(row.cardSize) || `${row.pieces} полос`;
+    cells[3].innerHTML = actualWeightText(row, lastCalculation.volume);
+    cells[4].innerHTML = `${decimal(row.scrap)} мм / ${pct((1 - row.yieldRate) * 100)}${row.subcutScrapTotal ? `<small> (${decimal(row.sourceScrap)} + ${row.subcuts}×${PRICE.longitudinal.minScrap})</small>` : ''}`;
+  });
+}
+  // Вызов встроен в calculate(): иначе перехват клика может пропустить обновление таблицы.
   ensurePurchaseButton(); setupDeliveryMonths(); bindExcelExport();
 
   // Инициализируем локальные позиции до необязательного Excel-модуля.
