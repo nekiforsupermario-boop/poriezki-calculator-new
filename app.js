@@ -286,7 +286,8 @@ $('calculateButton').addEventListener('click', () => { if (!$('error').hidden ||
           ['I24', ...Array.from({ length: 15 }, (_, index) => `K${8 + index}`), ...Array.from({ length: 15 }, (_, index) => `K${45 + index}`)].forEach(address => {
             sheet.getCell(address).numFmt = currencyFormat;
           });
-          for (let row = 9; row <= 21; row += 1) copyFormulaRow(sheet, 8, row, [2, 3, 4, 5, 6, 7, 8, 9]);
+          // U (21) — введённая пользователем итоговая цена, не перезаписываем формулой.
+          for (let row = 9; row <= 21; row += 1) copyFormulaRow(sheet, 8, row, [2, 3, 4, 5, 6, 7, 8, 9, 21]);
           for (let row = 46; row <= 58; row += 1) copyFormulaRow(sheet, 45, row, [2, 3, 4, 5, 6, 7, 8, 9, 11]);
           // В нижнем блоке переработка каждой строки берётся из соответствующей строки верхнего блока:
           // O46=O9, O47=O10 и далее. Шаблон содержит shared-ссылку O8, поэтому задаём их явно.
@@ -317,6 +318,17 @@ $('calculateButton').addEventListener('click', () => { if (!$('error').hidden ||
             sheet.getCell('AJ8').value = Number($('price')?.value) || lastCalculation?.best?.price || 0;
           }
           for (let row = 45; row <= 58; row += 1) if (sheet.getRow(row).getCell(2).value) sheet.getRow(row).getCell(14).value = 2800;
+          // НДС 22%: заменяем /1.2 на /1.22 во всех формулах расчётного
+          // шаблона (цены без НДС, рентабельность, строки сводного расчёта).
+          sheet.eachRow(row => row.eachCell(cell => {
+            const formula = cell.formula;
+            if (typeof formula !== 'string' || !/\/\s*1\.2(?!\d)/.test(formula)) return;
+            cell.value = { formula: formula.replace(/\/(\s*)1\.2(?!\d)/g, (_, space) => `/${space}1.22`) };
+          }));
+          if (workbook.calcProperties) {
+            workbook.calcProperties.fullCalcOnLoad = true;
+            workbook.calcProperties.forceFullCalc = true;
+          }
         }
         const originalGetCell = sheet?.getCell?.bind(sheet);
         if (sheet && originalGetCell) sheet.getCell = (address, ...cellArgs) => { const cell = originalGetCell(address, ...cellArgs); if (address === 'Q1') return new Proxy(cell, { set(target, property, value) { target[property] = property === 'value' && value === 'руб' ? 'рубли' : value; return true; } }); return cell; };
@@ -487,7 +499,15 @@ async function exportBatchPurchaseCalculationToExcel(file) {
   const grade = $('steelGrade')?.value || '', purchasePrice = numericInputValue($('purchasePrice')?.value);
   const groupPrices = Object.fromEntries([...document.querySelectorAll('.batch-purchase-price')].map(input => [input.dataset.group, numericInputValue(input.value)]));
   const salePrices = [...document.querySelectorAll('.batch-sale-price')].map(input => numericInputValue(input.value));
-  const finalPrices = lastCalculation.batchFinalPrices || [];
+  // Экспортируем цены, реально показанные в окне после ручного редактирования.
+  const finalPrices = lastCalculation.batchItems.map((_, index) => {
+    const visible = document.querySelector(`#batchPurchaseSummary .batch-card-final-price[data-index="${index}"]`);
+    if (visible && visible.value.trim() !== '') return numericInputValue(visible.value);
+    const edited = lastCalculation.batchFinalPrices?.[index];
+    if (edited !== undefined) return edited;
+    const calculated = document.querySelector(`#batchFinalFields .batch-final-price[data-index="${index}"]`);
+    return calculated && calculated.value.trim() !== '' ? numericInputValue(calculated.value) : undefined;
+  });
   const rate = Number(String($('cbrRate')?.textContent || '').replace(/[^0-9,.-]/g, '').replace(',', '.')) || 0;
   const keyRate = Number(String($('keyRate')?.textContent || '').replace(/[^0-9,.-]/g, '').replace(',', '.')) || 0;
   const delivery = Math.max(0, numericInputValue($('deliveryCost')?.value)), days = Math.max(0, numericInputValue($('defermentDays')?.value));
@@ -533,6 +553,13 @@ setupLayoutChoices = function() {
   const select = $('layoutSelect');
   if (!select) return;
   const layoutLabel = select.closest('.layout-choice');
+  // Варианты раскроя по позициям показываем только для ленты и карточки.
+  if (selectedType !== 'strip' && selectedType !== 'card') {
+    if (layoutLabel) layoutLabel.hidden = true;
+    select.remove();
+    return;
+  }
+  if (layoutLabel) layoutLabel.hidden = false;
   if (lastCalculation?.batch) {
     if (layoutLabel?.dataset.batchBound === '1') return;
     layoutLabel.dataset.batchBound = '1';
