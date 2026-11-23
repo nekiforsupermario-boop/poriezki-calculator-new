@@ -9,7 +9,7 @@ const api = runInNewContext([
   "let selectedType = 'strip';",
   block('const PRICE =', 'const getRadio ='),
   ...lines,
-  "let radios = {}; const getRadio = name => radios[name] || ''; const $ = () => ({value: '172000'}); const numericInputValue = Number;",
+  "let radios = {}; let testMaterialCost = 172000; const getRadio = name => radios[name] || ''; const $ = () => ({value: String(testMaterialCost)}); const numericInputValue = Number;",
   block('function modeForNextOperation(', 'function showStep('),
   block('function serviceData(', 'function cardLayouts('),
   block('function readStripWidths(', 'function updateStripSizeControl('),
@@ -20,7 +20,7 @@ const api = runInNewContext([
   block('function serviceDataWithSubcut(', 'function cardCutDimensions('),
   block('function stripRowForFinishedVolume(', 'function calculate('),
   block('function bestCardBatchCoilWidth(', 'function calculateBatch('),
-  '({ bestCardBatchCoilWidth, cardRows, cardCutDimensions, compareCardRows, stripRows, compareStripRows, setTypeForTest(type) { selectedType = type; radios = {surface: "2b", film: "none", openMode: "partial"}; }, route(type, choices, ...args) { selectedType = type; radios = choices; return serviceData(...args); }, quantityToTons, stripLayoutMatch, stripLayouts, subcutLayouts, cardLayouts, multiStripLayouts, mixedLayoutSearchFits, layoutWeightItems, readStripWidths, charge, maxStrips, minScrap: PRICE.longitudinal.minScrap })'
+  '({ bestCardBatchCoilWidth, cardRows, cardCutDimensions, compareCardRows, stripRows, compareStripRows, setTypeForTest(type) { selectedType = type; radios = {surface: "2b", film: "none", openMode: "partial"}; }, setMaterialCostForTest(value) { testMaterialCost = value; }, route(type, choices, ...args) { selectedType = type; radios = choices; return serviceData(...args); }, quantityToTons, stripLayoutMatch, stripLayouts, subcutLayouts, cardLayouts, multiStripLayouts, mixedLayoutSearchFits, layoutWeightItems, readStripWidths, charge, maxStrips, minScrap: PRICE.longitudinal.minScrap })'
 ].join('\n'));
 const near = (actual, expected) => assert.ok(Math.abs(actual - expected) < 1e-9, actual + ' != ' + expected);
 test('A: mass balance independently of machine capacity', () => {
@@ -165,7 +165,7 @@ test('two-stage strip search represents every feasible yield in a brute-force ca
   const expectedPrice = (count, first, second) => {
     const yieldRate = count * width / coil;
     const source = .25 / yieldRate;
-    return 180000 + first * Math.max(source,3) / source + second + 172000 * (1-yieldRate) / yieldRate;
+    return 180000 + (first * Math.max(source,3) + second * source) / .25 + 172000 * (1-yieldRate) / yieldRate;
   };
   const directCounts = Array.from({length:Math.floor((coil-trim)/width)},(_,i)=>i+1);
   near(ranked[0].total, Math.min(
@@ -185,4 +185,54 @@ test('batch card chooses price first and yield on ties, regardless of coil width
   assert.equal(api.bestCardBatchCoilWidth([1000,1250],items),1250);
   rows[0].total -= 1;
   assert.equal(api.bestCardBatchCoilWidth([1000,1250,1219],items),1000);
+});
+
+test('119.5 mm strip avoids a single-lane layout when material price is zero', () => {
+  api.setTypeForTest('strip');
+  api.setMaterialCostForTest(0);
+  try {
+    const rows = [1000,1219,1250,1500].flatMap(coil =>
+      api.stripRows(coil,[119.5],1,1,0,'single',[],'tons',0)
+    ).sort((a,b) => api.compareStripRows(a,b,'single',1));
+    const best = rows[0];
+    assert.equal(best.coilWidth,1219);
+    assert.equal(best.layoutWidths.length,10);
+    near(best.scrap,24);
+    near(best.sourceVolume,1219/1195);
+    near(best.finishedVolume,1);
+    near(best.processing,3*6368);
+    near(best.total,19104);
+    const wasteful = rows.find(row => row.coilWidth===1500 && row.pieces===1 && !row.subcuts);
+    assert.ok(wasteful);
+    near(wasteful.sourceVolume,1500/119.5);
+    assert.ok(wasteful.total > 79000);
+    assert.ok(wasteful.total > best.total);
+    for (const row of rows) {
+      near(row.sourceVolume * row.yieldRate,row.finishedVolume);
+      near(row.processing,row.operations.reduce((sum,operation) => sum + operation.price,0));
+      near(row.total,row.price + row.processing + row.scrapCost);
+    }
+  } finally {
+    api.setMaterialCostForTest(172000);
+  }
+});
+
+test('mixed strip operations are also converted to rubles per finished tonne', () => {
+  api.setTypeForTest('strip');
+  api.setMaterialCostForTest(0);
+  try {
+    const rows = api.stripRows(1000,[150,310],.6,3,0,'multiple',
+      [{width:150,quantity:1},{width:310,quantity:2}],'tons',0);
+    const layout = rows.find(row =>
+      row.layoutWidths.filter(width => width===150).length===2
+      && row.layoutWidths.filter(width => width===310).length===2
+    );
+    assert.ok(layout);
+    near(layout.sourceVolume,3/0.92);
+    near(layout.finishedVolume,3);
+    near(layout.processing,6368*layout.sourceVolume/3);
+    near(layout.total,layout.processing);
+  } finally {
+    api.setMaterialCostForTest(172000);
+  }
 });

@@ -281,6 +281,22 @@ function stripRowForFinishedVolume(coilWidth, layout, thickness, finishedTons, p
   row.finishedVolume = finishedTons;
   if (finalWidths.every(width => Math.abs(width - finalWidths[0]) < 1e-8))
     row.requestedWeights = [{ width: finalWidths[0], tons: finishedTons }];
+  return stripPricingPerFinishedTon(row, finishedTons);
+}
+
+// Переработка исходного металла должна выражаться в руб/т ГОТОВОЙ ленты:
+// минимальная стоимость операции оплачивается за исходный объём, а не за выход.
+function stripPricingPerFinishedTon(row, finishedTons) {
+  if (!row || !(row.sourceVolume > 0) || !(finishedTons > 0)) return row;
+  const factor = row.sourceVolume / finishedTons;
+  row.operations.forEach(operation => { operation.price *= factor; });
+  row.firstCut *= factor;
+  row.secondCut *= factor;
+  row.cutting *= factor;
+  row.grinding *= factor;
+  row.film *= factor;
+  row.processing = row.operations.reduce((sum, operation) => sum + operation.price, 0);
+  row.total = row.price + row.processing + row.scrapCost;
   return row;
 }
 
@@ -289,7 +305,7 @@ function stripRows(coilWidth, widths, thickness, volume, price, mode, orders, un
     return multiStripLayouts(coilWidth, widths, thickness).map(layout => {
       const match = stripLayoutMatch(layout, orders, unit, thickness, length, coilWidth);
       const row = serviceData(coilWidth, layout.widths, thickness, match.sourceVolume, price, layout.label);
-      return row && Object.assign(row, { layoutScore: match.score, sourceVolume: match.sourceVolume, requestedWeights: match.requestedWeights });
+      return row && stripPricingPerFinishedTon(Object.assign(row, { layoutScore: match.score, sourceVolume: match.sourceVolume, finishedVolume: volume, requestedWeights: match.requestedWeights }), volume);
     }).filter(Boolean);
   }
   const rows = widths.flatMap(width => [
@@ -306,7 +322,10 @@ function compareStripRows(a, b, mode, widthCount) {
     const difference = a.layoutScore - b.layoutScore;
     if (Math.abs(difference) > 1e-9) return difference;
   }
-  return (mode === 'multiple' || widthCount > 1 ? b.yieldRate - a.yieldRate : 0) || a.total - b.total;
+  // Вначале экономическая стоимость, при равенстве — меньшие потери металла.
+  const priceDifference = a.total - b.total;
+  return (Math.abs(priceDifference) > 0.005 ? priceDifference : 0)
+    || b.yieldRate - a.yieldRate || a.coilWidth - b.coilWidth;
 }
 
 function calculate() {
