@@ -3,24 +3,26 @@ import { runInNewContext } from 'node:vm';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 const source = readFileSync(new URL('../app.js', import.meta.url), 'utf8');
+const optimizerSource = readFileSync(new URL('../subcut-optimizer.js', import.meta.url), 'utf8');
 const block = (start, end) => source.slice(source.indexOf(start), source.indexOf(end));
 const lines = source.split(/\r?\n/).filter(line => /^(const (decimal|charge) =|function (maxStrips|quantityToTons|thicknessBand|grindingPrice|filmPrice|stripBand|longitudinalRate)\()/.test(line));
 const api = runInNewContext([
   "let selectedType = 'strip';",
   block('const PRICE =', 'const getRadio ='),
   ...lines,
-  "let radios = {}; let testMaterialCost = 172000; const getRadio = name => radios[name] || ''; const $ = () => ({value: String(testMaterialCost)}); const numericInputValue = Number;",
+  "let radios = {}; let testMaterialCost = 172000, testSmallScrap = false; const getRadio = name => radios[name] || ''; const $ = id => id === 'allowSmallScrap' ? {checked:testSmallScrap} : {value: String(testMaterialCost)}; const numericInputValue = Number;",
   block('function modeForNextOperation(', 'function showStep('),
   block('function serviceData(', 'function cardLayouts('),
   block('function readStripWidths(', 'function updateStripSizeControl('),
   block('function stripLayoutMatch(', 'function setType('),
   block('function cardLayouts(', 'function serviceDataWithSubcut('),
+  optimizerSource,
   block('function layoutWeightItems(', 'function renderActualStripWeight('),
   block('function cardCutDimensions(', 'function cutPlanHtml('),
   block('function serviceDataWithSubcut(', 'function cardCutDimensions('),
   block('function stripRowForFinishedVolume(', 'function calculate('),
   block('function bestCardBatchCoilWidth(', 'function calculateBatch('),
-  '({ bestCardBatchCoilWidth, cardRows, cardCutDimensions, compareCardRows, stripRows, compareStripRows, setTypeForTest(type) { selectedType = type; radios = {surface: "2b", film: "none", openMode: "partial"}; }, setMaterialCostForTest(value) { testMaterialCost = value; }, route(type, choices, ...args) { selectedType = type; radios = choices; return serviceData(...args); }, quantityToTons, stripLayoutMatch, stripLayouts, subcutLayouts, cardLayouts, multiStripLayouts, mixedLayoutSearchFits, layoutWeightItems, readStripWidths, charge, maxStrips, minScrap: PRICE.longitudinal.minScrap })'
+  '({ bestCardBatchCoilWidth, cardRows, cardCutDimensions, compareCardRows, stripRows, compareStripRows, setTypeForTest(type) { selectedType = type; testSmallScrap = false; radios = {surface: "2b", film: "none", openMode: "partial"}; }, setMaterialCostForTest(value) { testMaterialCost = value; }, setSmallScrapForTest(value) { testSmallScrap = value; }, route(type, choices, ...args) { selectedType = type; radios = choices; return serviceData(...args); }, quantityToTons, stripLayoutMatch, stripLayouts, subcutLayouts, mixedSubcutLayouts, minimumScrap, cardLayouts, multiStripLayouts, mixedLayoutSearchFits, layoutWeightItems, readStripWidths, charge, maxStrips, minScrap: PRICE.longitudinal.minScrap })'
 ].join('\n'));
 const near = (actual, expected) => assert.ok(Math.abs(actual - expected) < 1e-9, actual + ' != ' + expected);
 test('A: mass balance independently of machine capacity', () => {
@@ -162,16 +164,18 @@ test('two-stage strip search represents every feasible yield in a brute-force ca
   const twoStage = rows.filter(row=>row.subcuts);
   for (const row of twoStage) near(row.sourceVolume*row.yieldRate,.25);
   const ranked=rows.sort((a,b)=>api.compareStripRows(a,b,'single',1));
-  const expectedPrice = (count, first, second) => {
-    const yieldRate = count * width / coil;
-    const source = .25 / yieldRate;
-    return 180000 + (first * Math.max(source,3) + second * source) / .25 + 172000 * (1-yieldRate) / yieldRate;
+  // Первый проход рассчитывается по исходной массе, повторная резка —
+  // по суммарной массе промежуточных рулонов, а не по исходной.
+  const independentPrice = row => {
+    const source = row.sourceVolume, intermediateWidth = row.subcutWidths
+      ? row.subcutWidths.reduce((sum,w) => sum+w,0) : 0;
+    const first = 6368*Math.max(source,3)/.25;
+    const second = row.subcutWidths ? 3460*source*intermediateWidth/(coil*.25) : 0;
+    const scrap = 172000*(1-row.yieldRate)/row.yieldRate;
+    return 180000+first+second+scrap;
   };
-  const directCounts = Array.from({length:Math.floor((coil-trim)/width)},(_,i)=>i+1);
-  near(ranked[0].total, Math.min(
-    ...directCounts.map(n=>expectedPrice(n,6368,0)),
-    ...[...expected].map(n=>expectedPrice(n,6368,3460))
-  ));
+  rows.forEach(row=>near(row.total,independentPrice(row)));
+  near(ranked[0].total,Math.min(...rows.map(independentPrice)));
 });
 
 test('batch card chooses price first and yield on ties, regardless of coil width', () => {
@@ -234,5 +238,70 @@ test('mixed strip operations are also converted to rubles per finished tonne', (
     near(layout.total,layout.processing);
   } finally {
     api.setMaterialCostForTest(172000);
+  }
+});
+
+
+test('mixed two-stage subcuts combine several widths and preserve mass at both passes', () => {
+  api.setTypeForTest('strip');
+  api.setMaterialCostForTest(0);
+  const orders = [
+    {width:74,quantity:1},{width:87,quantity:1},
+    {width:120,quantity:.35},{width:78,quantity:1}
+  ];
+  try {
+    const rows = [1000,1219,1250,1500].flatMap(coil =>
+      api.stripRows(coil,[74,87,120,78],2,3.35,0,'multiple',orders,'tons',0)
+    ).sort((a,b)=>api.compareStripRows(a,b,'multiple',4));
+    assert.ok(rows.some(row=>row.subcuts>=2));
+    const best=rows[0];
+    assert.equal(best.coilWidth,1219);
+    assert.ok(best.subcuts>=2);
+    assert.ok(best.layoutScore < .2);
+    near(best.sourceVolume*best.yieldRate,3.35);
+    const firstWidths=best.subcutGroups.reduce((sum,group)=>sum+group.width,0);
+    near(best.sourceScrap+firstWidths,best.coilWidth);
+    let finalWidths=0;
+    for (const group of best.subcutGroups) {
+      assert.ok(group.widths.length<=api.maxStrips(2,group.width));
+      assert.ok(group.scrap>=api.minimumScrap());
+      near(group.scrap+group.widths.reduce((sum,width)=>sum+width,0),group.width);
+      finalWidths+=group.widths.reduce((sum,width)=>sum+width,0);
+    }
+    near(finalWidths+best.scrap,best.coilWidth);
+    near(best.processing,best.operations.reduce((sum,op)=>sum+op.price,0));
+    const expectedFirst=6368*Math.max(best.sourceVolume,3)/3.35;
+    const expectedSecond=3460*best.sourceVolume*firstWidths/(best.coilWidth*3.35);
+    near(best.processing,expectedFirst+expectedSecond);
+    const direct=rows.filter(row=>!row.subcuts).sort((a,b)=>api.compareStripRows(a,b,'multiple',4))[0];
+    assert.ok(best.layoutScore<direct.layoutScore);
+  } finally {
+    api.setMaterialCostForTest(172000);
+  }
+});
+
+test('optional lower trim permits 6 mm but never 5 mm on every pass', () => {
+  api.setTypeForTest('strip');
+  assert.equal(api.minimumScrap(),7);
+  assert.equal(api.stripLayouts(1000,994,1).length,0);
+  api.setSmallScrapForTest(true);
+  try {
+    assert.equal(api.minimumScrap(),6);
+    assert.equal(api.stripLayouts(1000,994,1).length,1);
+    assert.equal(api.stripLayouts(1000,995,1).length,0);
+    const orders=[{width:74,quantity:1},{width:87,quantity:1},{width:120,quantity:.35},{width:78,quantity:1}];
+    const rows=api.stripRows(1000,[74,87,120,78],2,3.35,0,'multiple',orders,'tons',0);
+    const via=rows.filter(row=>row.subcuts);
+    assert.ok(via.length);
+    for(const row of via) {
+      assert.ok(row.sourceScrap>=6-1e-8);
+      for(const group of row.subcutGroups) assert.ok(group.scrap>=6-1e-8);
+      near(row.sourceVolume*row.yieldRate,3.35);
+    }
+    api.setTypeForTest('card');
+    assert.equal(api.minimumScrap(),7);
+  } finally {
+    api.setTypeForTest('strip');
+    api.setSmallScrapForTest(false);
   }
 });
