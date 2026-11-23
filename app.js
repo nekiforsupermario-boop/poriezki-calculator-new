@@ -49,6 +49,9 @@ const PRICE = {
   film: { pePerMeter: 60, lpePerMeter: 80 }, density: 7.8
 };
 const COIL_WIDTHS = [1000, 1219, 1250, 1500];
+// Обычный минимальный откройник 7 мм; для согласованной нестандартной
+// операции с лентой можно явно разрешить 6 мм, но никогда меньше.
+const minimumScrap = () => selectedType === 'strip' && $('allowSmallScrap')?.checked ? 6 : PRICE.longitudinal.minScrap;
 const getRadio = name => document.querySelector(`input[name="${name}"]:checked`)?.value || document.querySelector(`[name="${name}"]`)?.value || '';
 const charge = (rate, volume, minTons, mode) => rate * (mode === 'open' ? volume : Math.max(volume, minTons)) / volume;
 // Первая технологическая операция использует выбранный режим рулона.
@@ -85,7 +88,7 @@ function stripLayoutMatch(layout, orders, unit, thickness, length, coilWidth) {
   }, 0);
   return { sourceVolume, requestedWeights, score };
 }
-function setType(type) { selectedType = type; addOpenModeField(); updateRewindWidthControl(); document.querySelectorAll('label').forEach(label => { if (label.firstChild) label.firstChild.textContent = label.firstChild.textContent.replace(/руб\/т(?!н)/, 'руб/тн'); }); document.querySelectorAll('.type-card').forEach(card => card.classList.toggle('selected', card.dataset.type === type)); $('paramsTitle').textContent = `Параметры ${typeNames[type]}`; document.querySelector('.length-field').hidden = type === 'strip' || type === 'rewind'; updateStripSizeControl(); updateUnits(); }
+function setType(type) { selectedType = type; if ($('stripScrapOptions')) $('stripScrapOptions').hidden = type !== 'strip'; addOpenModeField(); updateRewindWidthControl(); document.querySelectorAll('label').forEach(label => { if (label.firstChild) label.firstChild.textContent = label.firstChild.textContent.replace(/руб\/т(?!н)/, 'руб/тн'); }); document.querySelectorAll('.type-card').forEach(card => card.classList.toggle('selected', card.dataset.type === type)); $('paramsTitle').textContent = `Параметры ${typeNames[type]}`; document.querySelector('.length-field').hidden = type === 'strip' || type === 'rewind'; updateStripSizeControl(); updateUnits(); }
 function thicknessBand(t) { return t <= .6 ? 0 : t <= .8 ? 1 : t <= 1 ? 2 : t <= 1.5 ? 3 : t <= 3 ? 4 : t <= 5 ? 5 : -1; }
 function grindingPrice(type, thickness, volume, mode) { const band = PRICE.grinding.roll[thicknessBand(thickness)]; return band ? charge(band[mode], volume, PRICE.grinding.rollMinTons, mode) : 0; }
 function filmPrice(type, thickness, yieldRate, coilWidth) { const film = getRadio('film'); if (film === 'none') return 0; const sides = getRadio('filmSides') === 'two' ? 2 : 1; const pricePerMeter = film === 'lpe' ? PRICE.film.lpePerMeter : PRICE.film.pePerMeter; const width = Number(coilWidth) || 1250; const tonsPerMeter = thickness * width * PRICE.density * 0.000001; return tonsPerMeter > 0 ? pricePerMeter * sides / tonsPerMeter : 0; }
@@ -96,7 +99,7 @@ function quantityToTons(quantity, unit, thickness, width, length) { if (unit ===
 
 function serviceData(coilWidth, productWidth, thickness, volume, price, cardSize = '') {
   const laneWidths = Array.isArray(productWidth) ? productWidth : [productWidth], usedWidth = laneWidths.reduce((sum, width) => sum + width, 0), pieces = selectedType === 'rewind' ? 1 : laneWidths.length, scrap = coilWidth - usedWidth, yieldRate = usedWidth / coilWidth;
-  if (!pieces || (selectedType !== 'sheet' && selectedType !== 'rewind' && maxStrips(thickness, coilWidth) < pieces) || (selectedType !== 'sheet' && selectedType !== 'rewind' && scrap < PRICE.longitudinal.minScrap)) return null;
+  if (!pieces || (selectedType !== 'sheet' && selectedType !== 'rewind' && maxStrips(thickness, coilWidth) < pieces) || (selectedType !== 'sheet' && selectedType !== 'rewind' && scrap < minimumScrap())) return null;
   const mode = scrap === 0 ? 'full' : 'partial', openCutMode = getRadio('openMode') || 'open', operations = [], hasGrinding = getRadio('surface') === '4n';
   let firstCut = 0;
   let grinding = 0; if (hasGrinding) { grinding = grindingPrice(selectedType, thickness, volume, openCutMode); operations.push({ name: '1. Шлифовка', mode: openCutMode === 'open' ? 'полностью открытый рулон' : openCutMode === 'full' ? 'полностью рулон' : 'частичный рулон', price: grinding }); if (getRadio('film') !== 'none' && getRadio('filmSides') === 'two') { const rewindMode = modeForNextOperation(operations, openCutMode), rewindPrice = PRICE.grinding.rewind[rewindMode]; operations.push({ name: 'Дополнительная перемотка на шлифовке', mode: 'открытый рулон до конца (вторая сторона)', price: charge(rewindPrice, volume, selectedType === 'sheet' ? 1 : PRICE.grinding.rollMinTons, rewindMode) }); } }
@@ -114,7 +117,7 @@ function cardLayouts(coilWidth, firstWidth, secondWidth, thickness) {
     if (!first && !second) continue;
     if (duplicate && second) continue;
     const widths = [...Array(first).fill(firstWidth), ...Array(second).fill(secondWidth)], used = widths.reduce((sum, width) => sum + width, 0), scrap = coilWidth - used;
-    if (used <= coilWidth && scrap >= PRICE.longitudinal.minScrap) {
+    if (used <= coilWidth && scrap >= minimumScrap()) {
       const label = `${first ? `${first}×${firstWidth} мм` : ''}${first && second ? ' + ' : ''}${second ? `${second}×${secondWidth} мм` : ''}`;
       layouts.push({ widths, label });
     }
@@ -126,7 +129,7 @@ function stripLayouts(coilWidth, stripWidth, thickness) {
   const layouts = [], max = Math.min(maxStrips(thickness, coilWidth), Math.floor(coilWidth / stripWidth));
   for (let count = 1; count <= max; count += 1) {
     const used = count * stripWidth, scrap = coilWidth - used;
-    if (scrap >= PRICE.longitudinal.minScrap) layouts.push({ widths: Array(count).fill(stripWidth), label: `${count}×${decimal(stripWidth)} мм` });
+    if (scrap >= minimumScrap()) layouts.push({ widths: Array(count).fill(stripWidth), label: `${count}×${decimal(stripWidth)} мм` });
   }
   return layouts;
 }
@@ -136,7 +139,7 @@ function mixedLayoutSearchFits(widths, thickness, multiple, coils = COIL_WIDTHS)
   const totalWidth = widths.reduce((sum, width) => sum + width, 0);
   const smallest = Math.min(...widths);
   for (const coil of coils) {
-    const available = coil - PRICE.longitudinal.minScrap;
+    const available = coil - minimumScrap();
     const free = Math.min(maxStrips(thickness, coil) - widths.length, Math.floor((available - totalWidth) / smallest));
     if (free < 0) continue;
     // C(free + widths.length, widths.length) bounds all count vectors.
@@ -146,11 +149,11 @@ function mixedLayoutSearchFits(widths, thickness, multiple, coils = COIL_WIDTHS)
   }
   return work <= 100000;
 }
-  function multiStripLayouts(coilWidth, stripWidths, thickness) { const widths = [...new Set(stripWidths)].sort((a, b) => a - b); if (widths.length <= 1) return stripLayouts(coilWidth, widths[0], thickness); const layouts = [], max = maxStrips(thickness, coilWidth); if (widths.length > max || widths.reduce((sum, width) => sum + width, 0) > coilWidth - PRICE.longitudinal.minScrap) return layouts; function build(index, selected, used) { if (index === widths.length) { const scrap = coilWidth - used; if (selected.length && scrap >= PRICE.longitudinal.minScrap) { const counts = widths.map(width => selected.filter(item => item === width).length).filter(Boolean); const label = widths.map((width, i) => counts[i] ? `${counts[i]}×${width} мм` : '').filter(Boolean).join(' + '); layouts.push({ widths: selected, label }); } return; } const width = widths[index], maxCount = Math.min(max - selected.length - (widths.length - index - 1), Math.floor((coilWidth - used - PRICE.longitudinal.minScrap - widths.slice(index + 1).reduce((sum, item) => sum + item, 0)) / width)); for (let count = 1; count <= maxCount; count += 1) build(index + 1, [...selected, ...Array(count).fill(width)], used + count * width); } build(0, [], 0); return layouts; }
+  function multiStripLayouts(coilWidth, stripWidths, thickness) { const widths = [...new Set(stripWidths)].sort((a, b) => a - b); if (widths.length <= 1) return stripLayouts(coilWidth, widths[0], thickness); const layouts = [], max = maxStrips(thickness, coilWidth); if (widths.length > max || widths.reduce((sum, width) => sum + width, 0) > coilWidth - minimumScrap()) return layouts; function build(index, selected, used) { if (index === widths.length) { const scrap = coilWidth - used; if (selected.length && scrap >= minimumScrap()) { const counts = widths.map(width => selected.filter(item => item === width).length).filter(Boolean); const label = widths.map((width, i) => counts[i] ? `${counts[i]}×${width} мм` : '').filter(Boolean).join(' + '); layouts.push({ widths: selected, label }); } return; } const width = widths[index], maxCount = Math.min(max - selected.length - (widths.length - index - 1), Math.floor((coilWidth - used - minimumScrap() - widths.slice(index + 1).reduce((sum, item) => sum + item, 0)) / width)); for (let count = 1; count <= maxCount; count += 1) build(index + 1, [...selected, ...Array(count).fill(width)], used + count * width); } build(0, [], 0); return layouts; }
 function subcutLayouts(coilWidth, stripWidth, thickness) {
   const sourceLimit = maxStrips(thickness, coilWidth);
   if (!sourceLimit || !Number.isFinite(stripWidth) || stripWidth <= 0) return [];
-  const trim = PRICE.longitudinal.minScrap;
+  const trim = minimumScrap();
   const feasibleCounts = [];
   for (let count = 1; count <= sourceLimit; count += 1) {
     const width = count * stripWidth + trim;
@@ -197,49 +200,18 @@ function subcutLayouts(coilWidth, stripWidth, thickness) {
     subcutLabel: `${layout.widths.map(format).join(' + ')} мм` }));
 
 }
-function serviceDataWithSubcut(coilWidth, stripWidth, thickness, volume, price, layout) {
-  const base = serviceData(coilWidth, layout.widths, thickness, volume, price, layout.label);
-  if (!base) return null;
-  const hasGrinding = getRadio('surface') === '4n', firstMode = hasGrinding ? 'open' : (getRadio('openMode') || 'open'), secondMode = 'open';
-  const firstRate = longitudinalRate(Math.max(...layout.widths), firstMode, coilWidth);
-  const secondRate = longitudinalRate(stripWidth, secondMode, Math.max(...layout.widths));
-  if (!firstRate || !secondRate) return null;
-  const first = charge(firstRate, volume, PRICE.longitudinal.minTons, firstMode);
-  const second = charge(secondRate, volume, PRICE.longitudinal.minTons, secondMode);
-  const surcharge = $('specialConditions')?.checked ? PRICE.longitudinal.special : 0;
-  const discount = $('furtherProcessing')?.checked ? PRICE.longitudinal.followUpDiscount : 0;
-  const subcutPrice = Math.max(0, first + surcharge);
-  const finalPrice = Math.max(0, second + surcharge - discount);
-  const replacement = [
-    { name: hasGrinding ? '2. Продольная резка подкатов' : '1. Продольная резка подкатов', mode: firstMode === 'open' ? 'открытый рулон до конца' : firstMode === 'full' ? 'полностью рулон' : 'частичный рулон', price: subcutPrice },
-    { name: hasGrinding ? '3. Продольная резка в ленту' : '2. Продольная резка в ленту', mode: 'открытый рулон до конца', price: finalPrice }
-  ];
-  const oldCutting = base.operations.filter(operation => operation.name.includes('Продольная резка')).reduce((sum, operation) => sum + operation.price, 0);
-  base.operations = base.operations.flatMap(operation => operation.name.includes('Продольная резка') ? replacement : [operation]);
-  base.layoutWidths = Array(layout.count).fill(stripWidth);
-  base.subcutWidths = layout.widths;
-  base.subcutCounts = layout.counts;
-  base.subcutLabel = layout.subcutLabel;
-  base.subcuts = layout.subcuts;
-  const sourceScrap = coilWidth - layout.widths.reduce((sum, width) => sum + width, 0), subcutScrap = layout.subcuts * PRICE.longitudinal.minScrap, finalUsedWidth = layout.count * stripWidth;
-  base.sourceScrap = sourceScrap;
-  base.subcutScrap = subcutScrap;
-  base.subcutScrapTotal = subcutScrap;
-  base.scrap = sourceScrap + subcutScrap;
-  base.yieldRate = finalUsedWidth / coilWidth;
-  const materialCost = numericInputValue($('materialCost').value);
-  base.effectiveMaterial = materialCost / base.yieldRate;
-  base.scrapCost = materialCost * (1 - base.yieldRate) / base.yieldRate;
-  base.firstCut = subcutPrice;
-  base.secondCut = finalPrice;
-  base.cutting = base.cutting - oldCutting + subcutPrice + finalPrice;
-  const film = filmPrice(selectedType, thickness, base.yieldRate, base.coilWidth), filmIndex = base.operations.findIndex(operation => operation.name === 'Плёнка');
-  if (filmIndex >= 0) base.operations[filmIndex].price = film;
-  else if (film) base.operations.push({ name: 'Плёнка', mode: getRadio('filmSides') === 'two' ? 'с двух сторон' : 'с одной стороны', price: film });
-  base.film = film;
-  base.processing = base.operations.reduce((sum, operation) => sum + operation.price, 0);
-  base.total = base.price + base.processing + base.scrapCost;
-  return base;
+// Для одного размера применяем те же правила массы второго прохода,
+// что и для смешанного раскроя через подкаты.
+function serviceDataWithSubcut(coilWidth,stripWidth,thickness,volume,price,layout) {
+  const subcutGroups=layout.widths.map((width,index)=>({
+    width,widths:Array(layout.counts[index]).fill(stripWidth),
+    scrap:width-layout.counts[index]*stripWidth
+  }));
+  const row=serviceDataWithMixedSubcut(coilWidth,thickness,volume,price,{
+    subcutGroups,finalWidths:Array(layout.count).fill(stripWidth),label:layout.label
+  });
+  if(row) {row.subcutCounts=layout.counts;row.subcutLabel=layout.subcutLabel;}
+  return row;
 }
 function cardCutDimensions(widths, width, length) {
   const counts = new Map();
@@ -259,9 +231,18 @@ const compareCardRows = (a, b) => a.total - b.total || b.yieldRate - a.yieldRate
 
 function cutPlanHtml(row, length = 0, width = 0) {
   const finalLayout = prettyLayout(row.cardSize) || `${row.pieces} полос`;
+  if (row.subcutGroups?.length) {
+    const groupTitles=row.subcutGroups.map(group=>`${decimal(group.width)} мм`).join(' + ');
+    const detail=row.subcutGroups.map((group,index)=>{
+      const unique=[...new Set(group.widths)];
+      const final=unique.map(w=>`${group.widths.filter(v=>v===w).length}×${decimal(w)} мм`).join(' + ');
+      return `<div class="cut-plan-line"><b>${index+1}.</b> Подкат <strong>${decimal(group.width)} мм</strong> → <strong>${final}</strong><span>откройник: ${decimal(group.scrap)} мм</span></div>`;
+    }).join('');
+    return `<details class="cut-plan"><summary>Показать этапы</summary><div class="cut-plan-line"><b>1.</b> Исходный рулон <strong>${row.coilWidth} мм</strong> → подкаты: <strong>${groupTitles}</strong><span>откройник исходного рулона: ${decimal(row.sourceScrap)} мм</span></div><div class="cut-plan-line"><b>2.</b> Повторная резка подкатов:</div>${detail}<div class="cut-plan-line"><strong>Готовая лента: ${finalLayout}</strong><span>итоговые потери: ${decimal(row.scrap)} мм</span></div></details>`;
+  }
   if (row.subcutWidths?.length) {
     const subcutLayout = row.subcutWidths.map((width, index) => `${decimal(width)} мм → ${row.subcutCounts[index]} полос`).join(' + ');
-    return `<details class="cut-plan"><summary>Показать этапы</summary><div class="cut-plan-line"><b>1.</b> Исходный рулон <strong>${row.coilWidth} мм</strong> → подкат: <strong>${subcutLayout}</strong><span>откройник рулона: ${decimal(row.sourceScrap)} мм</span></div><div class="cut-plan-line"><b>2.</b> Подкаты → готовая лента: <strong>${finalLayout}</strong><span>откройник каждого подката: ${PRICE.longitudinal.minScrap} мм</span></div></details>`;
+    return `<details class="cut-plan"><summary>Показать этапы</summary><div class="cut-plan-line"><b>1.</b> Исходный рулон <strong>${row.coilWidth} мм</strong> → подкат: <strong>${subcutLayout}</strong><span>откройник рулона: ${decimal(row.sourceScrap)} мм</span></div><div class="cut-plan-line"><b>2.</b> Подкаты → готовая лента: <strong>${finalLayout}</strong><span>откройник каждого подката: ${minimumScrap()} мм</span></div></details>`;
   }
   if (selectedType === 'card') return `<details class="cut-plan"><summary>Показать этапы</summary><div class="cut-plan-line"><b>1.</b> Исходный рулон <strong>${row.coilWidth} мм</strong> → ленты: <strong>${finalLayout}</strong><span>откройник: ${decimal(row.scrap)} мм</span></div><div class="cut-plan-line"><b>2.</b> Ленты → карточки <strong>${cardCutDimensions(row.layoutWidths, width, length).map(({across, along, count}) => `${count} × (${decimal(across)} × ${decimal(along)} мм)`).join(' + ')}</strong><span>поперечная резка открытого рулона</span></div></details>`;
   return `<details class="cut-plan"><summary>Показать этапы</summary><div class="cut-plan-line"><b>1.</b> Исходный рулон <strong>${row.coilWidth} мм</strong> → готовая лента: <strong>${finalLayout}</strong><span>откройник: ${decimal(row.scrap)} мм</span></div></details>`;
@@ -302,11 +283,20 @@ function stripPricingPerFinishedTon(row, finishedTons) {
 
 function stripRows(coilWidth, widths, thickness, volume, price, mode, orders, unit, length) {
   if (mode === 'multiple') {
-    return multiStripLayouts(coilWidth, widths, thickness).map(layout => {
+    const direct = multiStripLayouts(coilWidth, widths, thickness).map(layout => {
       const match = stripLayoutMatch(layout, orders, unit, thickness, length, coilWidth);
       const row = serviceData(coilWidth, layout.widths, thickness, match.sourceVolume, price, layout.label);
       return row && stripPricingPerFinishedTon(Object.assign(row, { layoutScore: match.score, sourceVolume: match.sourceVolume, finishedVolume: volume, requestedWeights: match.requestedWeights }), volume);
     }).filter(Boolean);
+    const subcuts = mixedSubcutLayouts(coilWidth, widths, thickness, orders, unit, length).map(layout => {
+      const match = stripLayoutMatch({ widths: layout.finalWidths }, orders, unit, thickness, length, coilWidth);
+      const row = serviceDataWithMixedSubcut(coilWidth, thickness, match.sourceVolume, price, layout);
+      return row && stripPricingPerFinishedTon(Object.assign(row, {
+        layoutScore: match.score, sourceVolume: match.sourceVolume, finishedVolume: volume,
+        requestedWeights: match.requestedWeights
+      }), volume);
+    }).filter(Boolean);
+    return direct.concat(subcuts);
   }
   const rows = widths.flatMap(width => [
     ...stripLayouts(coilWidth, width, thickness).map(layout => stripRowForFinishedVolume(coilWidth, layout, thickness, volume, price)),
@@ -354,7 +344,7 @@ function calculate() {
     $('resultCaption').innerHTML = $('resultCaption').innerHTML.replace(/ · объём [\d\s,.]+ т/, ` · заказ ${stripTons(volume)} т готовой ленты · исходный металл ${stripTons(best.sourceVolume)} т`); document.querySelector('.table-wrap').hidden = selectedType === 'sheet' || selectedType === 'rewind'; document.querySelectorAll('.scrap-col,.scrap-cell').forEach(el => el.hidden = selectedType === 'sheet' || selectedType === 'rewind'); document.querySelectorAll('.orientation-col,.orientation-cell').forEach(el => el.hidden = selectedType !== 'card'); $('recommendation').innerHTML = `${selectedType === 'sheet' ? 'Лист' : selectedType === 'rewind' ? 'Рулон' : 'Рекомендуемый рулон:'} <strong>${best.coilWidth} мм</strong>${(selectedType === 'card' || selectedType === 'strip') && best.cardSize ? ` · раскрой ${prettyLayout(best.cardSize)}` : ''}<span>Маршрут: ${best.operations.map(item => item.name.replace(/^\d\. /, '')).join(' → ')}</span>`;
   $('resultsBody').innerHTML = rows.map((row, index) => {
     const coil = `<strong>${row.coilWidth} мм</strong>${index === 0 ? '<em>лучший</em>' : ''}${selectedType === 'strip' || selectedType === 'card' ? cutPlanHtml(row, length, productWidth) : ''}`;
-    const scrap = `${decimal(row.scrap)} мм / ${pct((1 - row.yieldRate) * 100)}${row.subcutScrapTotal ? `<small> (${decimal(row.sourceScrap)} + ${row.subcuts}×${PRICE.longitudinal.minScrap})</small>` : ''}`;
+    const scrap = `${decimal(row.scrap)} мм / ${pct((1 - row.yieldRate) * 100)}${row.subcutScrapTotal ? `<small> (${decimal(row.sourceScrap)} + ${row.subcuts}×${row.subcutTrim || minimumScrap()})</small>` : ''}`;
     const priceCell = `<strong>${money(row.total)} руб/тн</strong>`;
     if (selectedType === 'strip') {
       const source = row.sourceVolume ? `<small class="strip-source-weight">Исходный металл: ${stripTons(row.sourceVolume)} т</small>` : '';
@@ -366,7 +356,7 @@ function calculate() {
   $('note').textContent = selectedType === 'card' && getRadio('surface') === '4n' ? 'Карточки: сначала шлифовка, затем продольная резка в ленту и поперечная резка открытого рулона до конца.' : selectedType === 'card' ? 'Карточки: сначала продольная резка в ленту, затем поперечная резка открытого рулона до конца.' : selectedType === 'sheet' && getRadio('surface') === '4n' ? 'Шлифованный лист: сначала шлифовка, затем поперечная резка открытого рулона до конца.' : selectedType === 'rewind' ? 'Рулон рассчитан как отдельная операция перемотки без продольного раскроя.' : 'Автоматически применены условия прайса по режиму рулона, минимальному объёму и дальнейшей переработке.';
   const customMinWidth = selectedType === 'strip' && stripSizeMode === 'multiple' ? productWidths.reduce((sum, width) => sum + width, 0) : productWidth, customProductWidth = selectedType === 'strip' ? productWidths : productWidth; const custom = document.createElement('tr'); custom.className = 'custom-row'; custom.innerHTML = `<td><input id="customCoilWidth" type="number" min="${customMinWidth}" step="1" placeholder="Своя ширина"></td>${selectedType === 'strip' ? '' : `<td class="orientation-cell"${selectedType === 'card' ? '' : ' hidden'}>${selectedType === 'card' ? 'Ориентация задаётся в таблице' : ''}</td>`}<td colspan="${selectedType === 'strip' ? 4 : selectedType === 'sheet' || selectedType === 'rewind' ? 3 : 4}" id="customResult">Введите ширину — расчёт появится автоматически</td>`; $('resultsBody').appendChild(custom); $('customCoilWidth').addEventListener('input', () => renderCustom(Number($('customCoilWidth').value), thickness, customProductWidth, volume, price));
   lastCalculation = { rows, best, volume, thickness, length, materialCost, unit, stripOrders, stripSizeMode, productWidths, alternativeWidths, paymentTerms: getRadio('paymentTerms'), deliveryMonth: $('deliveryMonth')?.value || '' };
-  localStorage.setItem('metal-cutter-values', JSON.stringify({ type: selectedType, thickness, productWidth: productWidthRaw, stripSizeMode, stripOrders, length, quantity, unit, volume, materialCost, price, surface: getRadio('surface'), film, filmSides, openMode: getRadio('openMode'), paymentTerms: getRadio('paymentTerms'), deliveryMonth: $('deliveryMonth')?.value || '' }));
+  localStorage.setItem('metal-cutter-values', JSON.stringify({ allowSmallScrap: $('allowSmallScrap')?.checked === true, type: selectedType, thickness, productWidth: productWidthRaw, stripSizeMode, stripOrders, length, quantity, unit, volume, materialCost, price, surface: getRadio('surface'), film, filmSides, openMode: getRadio('openMode'), paymentTerms: getRadio('paymentTerms'), deliveryMonth: $('deliveryMonth')?.value || '' }));
 }
 function renderCustom(coilWidth, thickness, productWidth, volume, price) {
   const out = $('customResult'), widths = Array.isArray(productWidth) ? productWidth : [productWidth];
@@ -395,7 +385,7 @@ function renderCustom(coilWidth, thickness, productWidth, volume, price) {
 }
 document.querySelectorAll('.type-card').forEach(card => card.addEventListener('click', () => setType(card.dataset.type))); $('nextButton').addEventListener('click', () => showStep(2)); $('backButton').addEventListener('click', () => showStep(1)); $('calculateButton').addEventListener('click', () => { calculate(); if (!$('error').hidden) return; showStep(3); }); $('editButton').addEventListener('click', () => showStep(2)); $('resetButton').addEventListener('click', () => { localStorage.removeItem('metal-cutter-values'); location.reload(); });
 $('backButton').addEventListener('click', event => { event.stopImmediatePropagation(); localStorage.removeItem('metal-cutter-values'); location.reload(); }, true);
-setupDeliveryMonths(); try { const saved = JSON.parse(localStorage.getItem('metal-cutter-values') || 'null'); if (saved) { setType(saved.type || 'strip'); ['thickness', 'productWidth', 'productLength', 'quantity', 'materialCost', 'price'].forEach(id => { if (saved[id] !== undefined) $(id).value = saved[id]; }); document.querySelector(`input[name="stripSizeMode"][value="${saved.stripSizeMode || 'single'}"]`)?.click(); if (saved.stripSizeMode === 'multiple' && Array.isArray(saved.stripOrders)) { const rows = document.querySelector('.multi-strip-rows'); if (rows) { rows.innerHTML = ''; saved.stripOrders.forEach(order => addStripOrderRow(rows, order.width, order.quantity)); } } document.querySelector(`input[name="unit"][value="${saved.unit}"]`)?.click(); document.querySelector(`input[name="surface"][value="${saved.surface}"]`)?.click(); document.querySelector(`input[name="film"][value="${saved.film}"]`)?.click(); document.querySelector(`input[name="filmSides"][value="${saved.filmSides}"]`)?.click(); document.querySelector(`input[name="openMode"][value="${saved.openMode || 'partial'}"]`)?.click(); document.querySelector(`input[name="paymentTerms"][value="${saved.paymentTerms || 'prepayment'}"]`)?.click(); if (saved.deliveryMonth) $('deliveryMonth').value = saved.deliveryMonth; } } catch {} setType(selectedType); showStep(1);
+setupDeliveryMonths(); try { const saved = JSON.parse(localStorage.getItem('metal-cutter-values') || 'null'); if (saved) { if ($('allowSmallScrap')) $('allowSmallScrap').checked = saved.allowSmallScrap === true; setType(saved.type || 'strip'); ['thickness', 'productWidth', 'productLength', 'quantity', 'materialCost', 'price'].forEach(id => { if (saved[id] !== undefined) $(id).value = saved[id]; }); document.querySelector(`input[name="stripSizeMode"][value="${saved.stripSizeMode || 'single'}"]`)?.click(); if (saved.stripSizeMode === 'multiple' && Array.isArray(saved.stripOrders)) { const rows = document.querySelector('.multi-strip-rows'); if (rows) { rows.innerHTML = ''; saved.stripOrders.forEach(order => addStripOrderRow(rows, order.width, order.quantity)); } } document.querySelector(`input[name="unit"][value="${saved.unit}"]`)?.click(); document.querySelector(`input[name="surface"][value="${saved.surface}"]`)?.click(); document.querySelector(`input[name="film"][value="${saved.film}"]`)?.click(); document.querySelector(`input[name="filmSides"][value="${saved.filmSides}"]`)?.click(); document.querySelector(`input[name="openMode"][value="${saved.openMode || 'partial'}"]`)?.click(); document.querySelector(`input[name="paymentTerms"][value="${saved.paymentTerms || 'prepayment'}"]`)?.click(); if (saved.deliveryMonth) $('deliveryMonth').value = saved.deliveryMonth; } } catch {} setType(selectedType); showStep(1);
 document.querySelectorAll('input[name="film"]').forEach(input => input.addEventListener('change', () => { if (input.checked && input.value === 'none') document.querySelector('input[name="filmSides"][value="one"]').checked = true; })); if (getRadio('film') === 'none') document.querySelector('input[name="filmSides"][value="one"]').checked = true;
 ['specialConditions', 'furtherProcessing', 'noPallet'].forEach(id => { if ($(id)) $(id).checked = false; });
 document.querySelector('input[name="unit"][value="tons"]').checked = true; document.querySelector('input[name="surface"][value="2b"]').checked = true; document.querySelector('input[name="film"][value="none"]').checked = true; document.querySelector('input[name="filmSides"][value="one"]').checked = true; document.querySelector('input[name="openMode"][value="partial"]').checked = true;
