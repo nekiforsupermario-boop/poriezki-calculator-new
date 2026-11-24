@@ -53,3 +53,8 @@ select{display:block;width:100%;margin-top:7px;border:1px solid #d8e0e6;border-r
 .strip-weight-total { margin-top: 4px; border-top: 1px solid #454d55; padding-top: 5px; font-weight: 700; white-space: nowrap; }
 .custom-strip-weight { margin-top: 8px; font-size: 12px; }
 .custom-strip-weight .strip-weight-list { display: inline-block; vertical-align: top; }
+
+/* Компактное размещение выбора режима исходного рулона для ленты. */
+#rollModeSlot .open-mode-row { display:block; margin-top:18px; }
+#rollModeSlot .open-mode-row fieldset { width:100%; }
+.strip-scrap-left { min-width:0; }
