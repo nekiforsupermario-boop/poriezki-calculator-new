@@ -188,3 +188,28 @@ function combinedStripLayouts(coilWidth,stripWidths,thickness,orders,unit,length
     return {readyWidths,subcutGroups,finalWidths,label,score:state.score};
   });
 }
+
+
+// Для заказа одной ширины тоже проверяем экономику смешанного первого
+// прохода: готовые ленты + подкат, из которого получаются дополнительные.
+function singleStripHybridLayouts(coilWidth,stripWidth,thickness) {
+  const trim=minimumScrap(), firstLimit=maxStrips(thickness,coilWidth);
+  const layouts=[];
+  if(!(stripWidth>0)||firstLimit<2)return layouts;
+  for(let ready=1;ready<firstLimit;ready++){
+    const maxSecond=Math.floor((coilWidth-ready*stripWidth-2*trim)/stripWidth);
+    for(let amount=1;amount<=Math.min(maxSecond,firstLimit);amount++){
+      const subcoilWidth=amount*stripWidth+trim;
+      if(amount>maxStrips(thickness,subcoilWidth))continue;
+      const readyWidths=Array(ready).fill(stripWidth);
+      const secondWidths=Array(amount).fill(stripWidth);
+      layouts.push({
+        readyWidths,
+        subcutGroups:[{width:subcoilWidth,widths:secondWidths,scrap:trim}],
+        finalWidths:[...readyWidths,...secondWidths],
+        label:`${ready+amount}×${decimal(stripWidth)} мм`
+      });
+    }
+  }
+  return layouts;
+}
