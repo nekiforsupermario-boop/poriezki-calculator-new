@@ -339,6 +339,13 @@ function stripRows(coilWidth, widths, thickness, volume, price, mode, orders, un
 
 // Прямой раскрой, гибридный маршрут и подкаты показываются разными
 // технологическими схемами. Не скрываем три лучших схемы каждого рулона.
+// На втором шаге для ленты можно ограничить поиск одной стандартной шириной.
+function sourceCoilChoices(type,productWidth,selected='any') {
+  if(type==='sheet'||type==='rewind')return [productWidth];
+  if(type==='strip' && selected!=='any' && COIL_WIDTHS.includes(Number(selected)))
+    return [Number(selected)];
+  return COIL_WIDTHS.slice();
+}
 function selectStripResults(rows,limitPerWidth=3) {
   const kept=[],seenByCoil=new Map(),countByCoil=new Map();
   for(const row of rows) {
@@ -388,9 +395,7 @@ function calculate() {
   if (![thickness, productWidth, materialCost, price].every(Number.isFinite) || !productWidths.length || thickness <= 0 || productWidth <= 0 || (!validStripOrders) || (stripSizeMode === 'single' && (!Number.isFinite(quantity) || quantity <= 0)) || materialCost < 0 || price < 0 || (selectedType !== 'strip' && selectedType !== 'rewind' && length <= 0) || (filmSides === 'two' && (film === 'none' || thickness > 2))) { error.textContent = filmSides === 'two' && film === 'none' ? 'Для двухсторонней плёнки выберите PE или LPE.' : filmSides === 'two' && thickness > 2 ? 'Плёнка с двух сторон доступна только до толщины 2,0 мм.' : !validStripOrders ? 'Добавьте минимум два типоразмера лент и укажите ширину с нужным весом или метражом.' : selectedType === 'strip' ? 'Проверьте заполнение параметров ленты. Ширины можно указать через /, например 184,5/249,5.' : 'Проверьте заполнение параметров выбранной позиции.'; error.hidden = false; return; }
   const volume = stripSizeMode === 'multiple' ? stripOrders.reduce((sum, order) => sum + quantityToTons(order.quantity, unit, thickness, order.width, length), 0) : quantityToTons(quantity, unit, thickness, productWidth, length); if (!Number.isFinite(volume) || volume <= 0) { error.textContent = 'Не удалось перевести количество в тонны. Проверьте размеры.'; error.hidden = false; return; } error.hidden = true;
   const stripCoilChoice=$('stripCoilWidth')?.value || 'any';
-  const requestedCoil=Number(stripCoilChoice);
-  const coilSelection=selectedType==='strip' && stripCoilChoice!=='any' && COIL_WIDTHS.includes(requestedCoil) ? [requestedCoil] : COIL_WIDTHS;
-  const candidates=selectedType==='sheet' || selectedType==='rewind' ? [productWidth] : selectedType==='strip' ? coilSelection : COIL_WIDTHS;
+  const candidates=sourceCoilChoices(selectedType,productWidth,stripCoilChoice);
   if (selectedType === 'strip' && productWidths.length > 1
       && !mixedLayoutSearchFits(productWidths, thickness, stripSizeMode === 'multiple', candidates)) {
     error.textContent = 'Слишком много сочетаний ширин. Сократите число типоразмеров и повторите расчёт.';
@@ -405,7 +410,7 @@ function calculate() {
       : candidates.map(width => serviceData(width, productWidth, thickness, volume, price)).filter(Boolean).sort((a, b) => a.total - b.total));
   const resultRows = selectedType==='strip' ? selectStripResults(rows,3)
     : rows.filter((row,index,list)=>selectedType!=='card' || list.findIndex(item=>item.coilWidth===row.coilWidth)===index)
-        .slice(0,selectedType==='card'?COIL_WIDTHS.length:5); if (!rows.length) { error.textContent = 'По условиям прайса подходящего варианта нет: проверьте ширину, толщину, количество полос и откройник.'; error.hidden = false; return; }
+        .slice(0,selectedType==='card'?COIL_WIDTHS.length:5); if (!resultRows.length) { error.textContent = 'По условиям прайса подходящего варианта нет: проверьте ширину, толщину, количество полос и откройник.'; error.hidden = false; return; }
   const productLabel = selectedType === 'strip' && stripSizeMode === 'multiple' ? stripOrders.map(order => `${fullNomenclature(selectedType, thickness, order.width)} — ${decimal(order.quantity)} ${unit === 'tons' ? 'т' : 'м'}`).join('<br>') : selectedType === 'strip' && productWidths.length > 1 ? `${productWidths.map(width => `${decimal(width)} мм`).join(' / ')} · ${decimal(thickness)} мм` : fullNomenclature(selectedType, thickness, productWidth, length), paymentLabel = getRadio('paymentTerms') === 'deferment' ? 'Отсрочка' : 'Предоплата', monthLabel = $('deliveryMonth')?.selectedOptions[0]?.textContent || ''; $('resultCaption').innerHTML = `<strong>${productLabel}</strong> · объём ${decimal(volume)} т · ${getRadio('surface') === '4n' ? 'Шлифовка' : 'Без шлифовки'} · ${paymentLabel}${monthLabel ? ` · поставка: ${monthLabel}` : ''}`;
   const best = resultRows[0];
   if(selectedType==='strip' && stripSizeMode==='multiple') {
