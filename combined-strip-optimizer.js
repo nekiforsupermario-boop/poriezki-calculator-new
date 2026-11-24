@@ -7,7 +7,8 @@ function combinedStripLayouts(coilWidth,stripWidths,thickness,orders,unit,length
   const widths=[...new Set(stripWidths)].sort((a,b)=>a-b);
   const trim=minimumScrap();
   const firstLimit=maxStrips(thickness,coilWidth);
-  if(widths.length<2||widths.length>8||firstLimit<3) return [];
+  // Для слишком широких номенклатур используем прежний ограниченный поиск.
+  if(widths.length<2||widths.length>5||firstLimit<3) return [];
   const targetByWidth=new Map();
   for(const order of orders) {
     const tons=quantityToTons(order.quantity,unit,thickness,order.width,length);
@@ -101,9 +102,12 @@ function combinedStripLayouts(coilWidth,stripWidths,thickness,orders,unit,length
   const toleranceRaw=Number($('stripTolerance')?.value);
   const tolerance=(Number.isFinite(toleranceRaw)&&toleranceRaw>=0&&toleranceRaw<=100?toleranceRaw:10)/100;
   const bestByCounts=new Map();
-  const provisional=[];
+  let scanned=0;
+  const maxScanned=300000;
+  let capped=false;
   function inspect(ready,groups,firstWidth,finalUsed,finalCounts,mask) {
     if(mask!==allMask || !(finalUsed>0)||firstWidth>coilWidth-trim+1e-8)return;
+    if(++scanned>maxScanned){capped=true;return;}
     let score=0,maxDeviation=0;
     for(let i=0;i<widths.length;i++) {
       const actual=volume*finalCounts[i]*widths[i]/finalUsed;
@@ -116,6 +120,17 @@ function combinedStripLayouts(coilWidth,stripWidths,thickness,orders,unit,length
     const previous=bestByCounts.get(key);
     const candidate={ready,groups,counts:finalCounts,used:finalUsed,score,maxDeviation,estimate};
     if(!previous||candidate.estimate<previous.estimate-1e-7)bestByCounts.set(key,candidate);
+    if(bestByCounts.size>25000) {
+      const shortlisted=[...bestByCounts.entries()]
+        .sort((a,b)=>{
+          const aOk=a[1].maxDeviation<=tolerance,bOk=b[1].maxDeviation<=tolerance;
+          if(aOk!==bOk)return aOk?-1:1;
+          return aOk ? a[1].estimate-b[1].estimate
+            : a[1].maxDeviation-b[1].maxDeviation;
+        }).slice(0,10000);
+      bestByCounts.clear();
+      for(const [k,v] of shortlisted)bestByCounts.set(k,v);
+    }
     return candidate;
   }
   // Шаблон first pass: <готовые полосы> + <подкат A> + <подкат B>.
@@ -125,16 +140,23 @@ function combinedStripLayouts(coilWidth,stripWidths,thickness,orders,unit,length
     const bucket=maskStates.get(state.mask)||[];
     state.ratio=state.counts.reduce((sum,n,i)=>sum+Math.abs(n*widths[i]/state.used-targetShares[i]),0);
     state.scoreHint=state.ratio-0.07*state.used/coilWidth;
+    if(bucket.length>=75 && state.scoreHint>=bucket[bucket.length-1].scoreHint)return;
     bucket.push(state);
+    if(bucket.length>=140) {
+      bucket.sort((a,b)=>a.scoreHint-b.scoreHint||b.used-a.used);
+      bucket.length=75;
+    }
     maskStates.set(state.mask,bucket);
   }
   for(const ready of readyPool) {
+    if(capped)break;
     if(ready.n+2>firstLimit)continue;
     const maxRemaining=coilWidth-trim-ready.used;
     for(let i=0;i<groupPool.length;i++) {
       const g1=groupPool[i];
       if(ready.used+g1.width+smallest+trim>coilWidth-trim+1e-8)break;
       for(let j=i;j<groupPool.length;j++) {
+        if(capped)break;
         const g2=groupPool[j];
         const firstWidth=ready.used+g1.width+g2.width;
         if(firstWidth>maxRemaining+1e-8)break;
@@ -160,7 +182,9 @@ function combinedStripLayouts(coilWidth,stripWidths,thickness,orders,unit,length
   }
   beam.sort((a,b)=>a.scoreHint-b.scoreHint);
   for(const state of beam.slice(0,300)) {
+    if(capped)break;
     for(let j=state.last;j<groupPool.length;j++) {
+      if(capped)break;
       const g=groupPool[j];
       const firstWidth=state.firstWidth+g.width;
       if(firstWidth>coilWidth-trim+1e-8)break;
