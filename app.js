@@ -82,11 +82,14 @@ function stripLayoutMatch(layout, orders, unit, thickness, length, coilWidth) {
   const used = layout.widths.reduce((sum, width) => sum + width, 0);
   const sourceVolume = finished * coilWidth / used;
   const requestedWeights = [...targets].map(([width, tons]) => ({ width, tons }));
-  const score = requestedWeights.reduce((sum, item) => {
-    const count = layout.widths.filter(width => Math.abs(width - item.width) < 1e-8).length;
-    return sum + Math.abs(sourceVolume * count * item.width / coilWidth - item.tons) / item.tons;
-  }, 0);
-  return { sourceVolume, requestedWeights, score };
+  let score=0,maxDeviation=0;
+  for(const item of requestedWeights) {
+    const count=layout.widths.filter(width=>Math.abs(width-item.width)<1e-8).length;
+    const deviation=Math.abs(sourceVolume*count*item.width/coilWidth-item.tons)/item.tons;
+    score+=deviation;
+    maxDeviation=Math.max(maxDeviation,deviation);
+  }
+  return {sourceVolume,requestedWeights,score,maxDeviation};
 }
 function setType(type) { selectedType = type; if ($('stripScrapOptions')) $('stripScrapOptions').hidden = type !== 'strip'; addOpenModeField(); updateRewindWidthControl(); document.querySelectorAll('label').forEach(label => { if (label.firstChild) label.firstChild.textContent = label.firstChild.textContent.replace(/руб\/т(?!н)/, 'руб/тн'); }); document.querySelectorAll('.type-card').forEach(card => card.classList.toggle('selected', card.dataset.type === type)); $('paramsTitle').textContent = `Параметры ${typeNames[type]}`; document.querySelector('.length-field').hidden = type === 'strip' || type === 'rewind'; updateStripSizeControl(); updateUnits(); }
 function thicknessBand(t) { return t <= .6 ? 0 : t <= .8 ? 1 : t <= 1 ? 2 : t <= 1.5 ? 3 : t <= 3 ? 4 : t <= 5 ? 5 : -1; }
@@ -289,13 +292,13 @@ function stripRows(coilWidth, widths, thickness, volume, price, mode, orders, un
     const direct = multiStripLayouts(coilWidth, widths, thickness).map(layout => {
       const match = stripLayoutMatch(layout, orders, unit, thickness, length, coilWidth);
       const row = serviceData(coilWidth, layout.widths, thickness, match.sourceVolume, price, layout.label);
-      return row && stripPricingPerFinishedTon(Object.assign(row, { layoutScore: match.score, sourceVolume: match.sourceVolume, finishedVolume: volume, requestedWeights: match.requestedWeights }), volume);
+      return row && stripPricingPerFinishedTon(Object.assign(row, { layoutScore: match.score,maxDeviation:match.maxDeviation, sourceVolume: match.sourceVolume, finishedVolume: volume, requestedWeights: match.requestedWeights }), volume);
     }).filter(Boolean);
     const subcuts = mixedSubcutLayouts(coilWidth, widths, thickness, orders, unit, length).map(layout => {
       const match = stripLayoutMatch({ widths: layout.finalWidths }, orders, unit, thickness, length, coilWidth);
       const row = serviceDataWithMixedSubcut(coilWidth, thickness, match.sourceVolume, price, layout);
       return row && stripPricingPerFinishedTon(Object.assign(row, {
-        layoutScore: match.score, sourceVolume: match.sourceVolume, finishedVolume: volume,
+        layoutScore: match.score, maxDeviation:match.maxDeviation, sourceVolume: match.sourceVolume, finishedVolume: volume,
         requestedWeights: match.requestedWeights
       }), volume);
     }).filter(Boolean);
@@ -303,7 +306,7 @@ function stripRows(coilWidth, widths, thickness, volume, price, mode, orders, un
       const match = stripLayoutMatch({ widths: layout.finalWidths }, orders, unit, thickness, length, coilWidth);
       const row = serviceDataWithHybridSubcut(coilWidth, thickness, match.sourceVolume, price, layout);
       return row && stripPricingPerFinishedTon(Object.assign(row, {
-        layoutScore: match.score, sourceVolume: match.sourceVolume, finishedVolume: volume,
+        layoutScore: match.score, maxDeviation:match.maxDeviation, sourceVolume: match.sourceVolume, finishedVolume: volume,
         requestedWeights: match.requestedWeights
       }), volume);
     }).filter(Boolean);
@@ -319,14 +322,29 @@ function stripRows(coilWidth, widths, thickness, volume, price, mode, orders, un
 }
 
 function compareStripRows(a, b, mode, widthCount) {
-  if (mode === 'multiple') {
-    const difference = a.layoutScore - b.layoutScore;
-    if (Math.abs(difference) > 1e-9) return difference;
+  if(mode==='multiple') {
+    // Сравниваем СТОИМОСТЬ только тех схем, где каждый типоразмер
+    // укладывается в согласованный допуск по массе.
+    const userTolerance=Number($('stripTolerance')?.value);
+    const limit=(Number.isFinite(userTolerance) && userTolerance>=0 && userTolerance<=100
+      ? userTolerance : 10)/100;
+    const acceptedA=(a.maxDeviation??Infinity)<=limit+1e-9;
+    const acceptedB=(b.maxDeviation??Infinity)<=limit+1e-9;
+    if(acceptedA!==acceptedB) return acceptedA?-1:1;
+    if(!acceptedA) {
+      const deviation=(a.maxDeviation??Infinity)-(b.maxDeviation??Infinity);
+      if(Math.abs(deviation)>1e-9) return deviation;
+      const mismatch=(a.layoutScore??Infinity)-(b.layoutScore??Infinity);
+      if(Math.abs(mismatch)>1e-9)return mismatch;
+    }
+    const cost=a.total-b.total;
+    if(Math.abs(cost)>0.005)return cost;
+    return a.maxDeviation-b.maxDeviation||a.layoutScore-b.layoutScore
+      ||b.yieldRate-a.yieldRate||a.coilWidth-b.coilWidth;
   }
-  // Вначале экономическая стоимость, при равенстве — меньшие потери металла.
-  const priceDifference = a.total - b.total;
-  return (Math.abs(priceDifference) > 0.005 ? priceDifference : 0)
-    || b.yieldRate - a.yieldRate || a.coilWidth - b.coilWidth;
+  const cost=a.total-b.total;
+  return (Math.abs(cost)>0.005?cost:0)
+    ||b.yieldRate-a.yieldRate||a.coilWidth-b.coilWidth;
 }
 
 function calculate() {
@@ -348,6 +366,14 @@ function calculate() {
       : candidates.map(width => serviceData(width, productWidth, thickness, volume, price)).filter(Boolean).sort((a, b) => a.total - b.total)).filter((row, index, list) => (selectedType !== 'strip' && selectedType !== 'card') || list.findIndex(item => item.coilWidth === row.coilWidth) === index).slice(0, selectedType === 'strip' || selectedType === 'card' ? COIL_WIDTHS.length : 5); if (!rows.length) { error.textContent = 'По условиям прайса подходящего варианта нет: проверьте ширину, толщину, количество полос и откройник.'; error.hidden = false; return; }
   const productLabel = selectedType === 'strip' && stripSizeMode === 'multiple' ? stripOrders.map(order => `${fullNomenclature(selectedType, thickness, order.width)} — ${decimal(order.quantity)} ${unit === 'tons' ? 'т' : 'м'}`).join('<br>') : selectedType === 'strip' && productWidths.length > 1 ? `${productWidths.map(width => `${decimal(width)} мм`).join(' / ')} · ${decimal(thickness)} мм` : fullNomenclature(selectedType, thickness, productWidth, length), paymentLabel = getRadio('paymentTerms') === 'deferment' ? 'Отсрочка' : 'Предоплата', monthLabel = $('deliveryMonth')?.selectedOptions[0]?.textContent || ''; $('resultCaption').innerHTML = `<strong>${productLabel}</strong> · объём ${decimal(volume)} т · ${getRadio('surface') === '4n' ? 'Шлифовка' : 'Без шлифовки'} · ${paymentLabel}${monthLabel ? ` · поставка: ${monthLabel}` : ''}`;
   const best = rows[0];
+  if(selectedType==='strip' && stripSizeMode==='multiple') {
+    const candidate=Number($('stripTolerance')?.value);
+    const threshold=Number.isFinite(candidate)&&candidate>=0&&candidate<=100?candidate:10;
+    const outside=(best.maxDeviation??Infinity)>threshold/100+1e-9;
+    $('resultCaption').innerHTML+=outside
+      ? ` · ⚠ Нет варианта в допуске ±${decimal(threshold)}% по каждой ширине; показан ближайший раскрой`
+      : ` · допуск по весу ±${decimal(threshold)}%, наибольшее отклонение ${pct(best.maxDeviation*100)}`;
+  }
   document.querySelector('#resultsStep thead tr').innerHTML = selectedType === 'strip'
     ? '<th>Исходный рулон</th><th>Раскрой</th><th>Вес готовых лент</th><th>Откройник</th><th>Итоговая цена</th>'
     : '<th>Исходный рулон</th><th class="orientation-col">Направление карточки</th><th>Полос / листов</th><th class="scrap-col">Откройник</th><th class="yield-col">Выход</th><th>Итоговая цена</th>';
@@ -367,7 +393,7 @@ function calculate() {
   $('note').textContent = selectedType === 'card' && getRadio('surface') === '4n' ? 'Карточки: сначала шлифовка, затем продольная резка в ленту и поперечная резка открытого рулона до конца.' : selectedType === 'card' ? 'Карточки: сначала продольная резка в ленту, затем поперечная резка открытого рулона до конца.' : selectedType === 'sheet' && getRadio('surface') === '4n' ? 'Шлифованный лист: сначала шлифовка, затем поперечная резка открытого рулона до конца.' : selectedType === 'rewind' ? 'Рулон рассчитан как отдельная операция перемотки без продольного раскроя.' : 'Автоматически применены условия прайса по режиму рулона, минимальному объёму и дальнейшей переработке.';
   const customMinWidth = selectedType === 'strip' && stripSizeMode === 'multiple' ? productWidths.reduce((sum, width) => sum + width, 0) : productWidth, customProductWidth = selectedType === 'strip' ? productWidths : productWidth; const custom = document.createElement('tr'); custom.className = 'custom-row'; custom.innerHTML = `<td><input id="customCoilWidth" type="number" min="${customMinWidth}" step="1" placeholder="Своя ширина"></td>${selectedType === 'strip' ? '' : `<td class="orientation-cell"${selectedType === 'card' ? '' : ' hidden'}>${selectedType === 'card' ? 'Ориентация задаётся в таблице' : ''}</td>`}<td colspan="${selectedType === 'strip' ? 4 : selectedType === 'sheet' || selectedType === 'rewind' ? 3 : 4}" id="customResult">Введите ширину — расчёт появится автоматически</td>`; $('resultsBody').appendChild(custom); $('customCoilWidth').addEventListener('input', () => renderCustom(Number($('customCoilWidth').value), thickness, customProductWidth, volume, price));
   lastCalculation = { rows, best, volume, thickness, length, materialCost, unit, stripOrders, stripSizeMode, productWidths, alternativeWidths, paymentTerms: getRadio('paymentTerms'), deliveryMonth: $('deliveryMonth')?.value || '' };
-  localStorage.setItem('metal-cutter-values', JSON.stringify({ allowSmallScrap: $('allowSmallScrap')?.checked === true, type: selectedType, thickness, productWidth: productWidthRaw, stripSizeMode, stripOrders, length, quantity, unit, volume, materialCost, price, surface: getRadio('surface'), film, filmSides, openMode: getRadio('openMode'), paymentTerms: getRadio('paymentTerms'), deliveryMonth: $('deliveryMonth')?.value || '' }));
+  localStorage.setItem('metal-cutter-values', JSON.stringify({ allowSmallScrap: $('allowSmallScrap')?.checked === true, stripTolerance:$('stripTolerance')?.value || '10', type: selectedType, thickness, productWidth: productWidthRaw, stripSizeMode, stripOrders, length, quantity, unit, volume, materialCost, price, surface: getRadio('surface'), film, filmSides, openMode: getRadio('openMode'), paymentTerms: getRadio('paymentTerms'), deliveryMonth: $('deliveryMonth')?.value || '' }));
 }
 function renderCustom(coilWidth, thickness, productWidth, volume, price) {
   const out = $('customResult'), widths = Array.isArray(productWidth) ? productWidth : [productWidth];
@@ -396,7 +422,7 @@ function renderCustom(coilWidth, thickness, productWidth, volume, price) {
 }
 document.querySelectorAll('.type-card').forEach(card => card.addEventListener('click', () => setType(card.dataset.type))); $('nextButton').addEventListener('click', () => showStep(2)); $('backButton').addEventListener('click', () => showStep(1)); $('calculateButton').addEventListener('click', () => { calculate(); if (!$('error').hidden) return; showStep(3); }); $('editButton').addEventListener('click', () => showStep(2)); $('resetButton').addEventListener('click', () => { localStorage.removeItem('metal-cutter-values'); location.reload(); });
 $('backButton').addEventListener('click', event => { event.stopImmediatePropagation(); localStorage.removeItem('metal-cutter-values'); location.reload(); }, true);
-setupDeliveryMonths(); try { const saved = JSON.parse(localStorage.getItem('metal-cutter-values') || 'null'); if (saved) { if ($('allowSmallScrap')) $('allowSmallScrap').checked = saved.allowSmallScrap === true; setType(saved.type || 'strip'); ['thickness', 'productWidth', 'productLength', 'quantity', 'materialCost', 'price'].forEach(id => { if (saved[id] !== undefined) $(id).value = saved[id]; }); document.querySelector(`input[name="stripSizeMode"][value="${saved.stripSizeMode || 'single'}"]`)?.click(); if (saved.stripSizeMode === 'multiple' && Array.isArray(saved.stripOrders)) { const rows = document.querySelector('.multi-strip-rows'); if (rows) { rows.innerHTML = ''; saved.stripOrders.forEach(order => addStripOrderRow(rows, order.width, order.quantity)); } } document.querySelector(`input[name="unit"][value="${saved.unit}"]`)?.click(); document.querySelector(`input[name="surface"][value="${saved.surface}"]`)?.click(); document.querySelector(`input[name="film"][value="${saved.film}"]`)?.click(); document.querySelector(`input[name="filmSides"][value="${saved.filmSides}"]`)?.click(); document.querySelector(`input[name="openMode"][value="${saved.openMode || 'partial'}"]`)?.click(); document.querySelector(`input[name="paymentTerms"][value="${saved.paymentTerms || 'prepayment'}"]`)?.click(); if (saved.deliveryMonth) $('deliveryMonth').value = saved.deliveryMonth; } } catch {} setType(selectedType); showStep(1);
+setupDeliveryMonths(); try { const saved = JSON.parse(localStorage.getItem('metal-cutter-values') || 'null'); if (saved) { if ($('allowSmallScrap')) $('allowSmallScrap').checked = saved.allowSmallScrap === true; if($('stripTolerance')) $('stripTolerance').value=saved.stripTolerance ?? '10'; setType(saved.type || 'strip'); ['thickness', 'productWidth', 'productLength', 'quantity', 'materialCost', 'price'].forEach(id => { if (saved[id] !== undefined) $(id).value = saved[id]; }); document.querySelector(`input[name="stripSizeMode"][value="${saved.stripSizeMode || 'single'}"]`)?.click(); if (saved.stripSizeMode === 'multiple' && Array.isArray(saved.stripOrders)) { const rows = document.querySelector('.multi-strip-rows'); if (rows) { rows.innerHTML = ''; saved.stripOrders.forEach(order => addStripOrderRow(rows, order.width, order.quantity)); } } document.querySelector(`input[name="unit"][value="${saved.unit}"]`)?.click(); document.querySelector(`input[name="surface"][value="${saved.surface}"]`)?.click(); document.querySelector(`input[name="film"][value="${saved.film}"]`)?.click(); document.querySelector(`input[name="filmSides"][value="${saved.filmSides}"]`)?.click(); document.querySelector(`input[name="openMode"][value="${saved.openMode || 'partial'}"]`)?.click(); document.querySelector(`input[name="paymentTerms"][value="${saved.paymentTerms || 'prepayment'}"]`)?.click(); if (saved.deliveryMonth) $('deliveryMonth').value = saved.deliveryMonth; } } catch {} setType(selectedType); showStep(1);
 document.querySelectorAll('input[name="film"]').forEach(input => input.addEventListener('change', () => { if (input.checked && input.value === 'none') document.querySelector('input[name="filmSides"][value="one"]').checked = true; })); if (getRadio('film') === 'none') document.querySelector('input[name="filmSides"][value="one"]').checked = true;
 ['specialConditions', 'furtherProcessing', 'noPallet'].forEach(id => { if ($(id)) $(id).checked = false; });
 document.querySelector('input[name="unit"][value="tons"]').checked = true; document.querySelector('input[name="surface"][value="2b"]').checked = true; document.querySelector('input[name="film"][value="none"]').checked = true; document.querySelector('input[name="filmSides"][value="one"]').checked = true; document.querySelector('input[name="openMode"][value="partial"]').checked = true;
