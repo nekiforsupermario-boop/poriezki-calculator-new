@@ -323,8 +323,14 @@ function stripRows(coilWidth, widths, thickness, volume, price, mode, orders, un
   const rows = widths.flatMap(width => [
     ...stripLayouts(coilWidth, width, thickness).map(layout => stripRowForFinishedVolume(coilWidth, layout, thickness, volume, price)),
     ...subcutLayouts(coilWidth, width, thickness).map(layout => stripRowForFinishedVolume(coilWidth, layout, thickness, volume, price, width)),
-    ...singleStripHybridLayouts(coilWidth,width,thickness).map(layout =>
-      stripRowForFinishedVolume(coilWidth,layout,thickness,volume,price,width))
+    ...singleStripHybridLayouts(coilWidth,width,thickness).map(layout => {
+      const used=layout.finalWidths.reduce((sum,w)=>sum+w,0);
+      const sourceVolume=volume*coilWidth/used;
+      const row=serviceDataWithMixedSubcut(coilWidth,thickness,sourceVolume,price,layout);
+      return row && stripPricingPerFinishedTon(Object.assign(row,{
+        sourceVolume,finishedVolume:volume,requestedWeights:[{width,tons:volume}]
+      }),volume);
+    }).filter(Boolean)
   ]);
   if (widths.length > 1) rows.push(...multiStripLayouts(coilWidth, widths, thickness)
     .map(layout => stripRowForFinishedVolume(coilWidth, layout, thickness, volume, price)));
