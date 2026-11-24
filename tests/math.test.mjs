@@ -22,7 +22,7 @@ const api = runInNewContext([
   block('function serviceDataWithSubcut(', 'function cardCutDimensions('),
   block('function stripRowForFinishedVolume(', 'function calculate('),
   block('function bestCardBatchCoilWidth(', 'function calculateBatch('),
-  '({ bestCardBatchCoilWidth, cardRows, cardCutDimensions, compareCardRows, stripRows, compareStripRows, setTypeForTest(type) { selectedType = type; testSmallScrap = false; radios = {surface: "2b", film: "none", openMode: "partial"}; }, setMaterialCostForTest(value) { testMaterialCost = value; }, setSmallScrapForTest(value) { testSmallScrap = value; }, route(type, choices, ...args) { selectedType = type; radios = choices; return serviceData(...args); }, quantityToTons, stripLayoutMatch, stripLayouts, subcutLayouts, mixedSubcutLayouts, minimumScrap, cardLayouts, multiStripLayouts, mixedLayoutSearchFits, layoutWeightItems, readStripWidths, charge, maxStrips, minScrap: PRICE.longitudinal.minScrap })'
+  '({ bestCardBatchCoilWidth, cardRows, cardCutDimensions, compareCardRows, stripRows, compareStripRows, setTypeForTest(type) { selectedType = type; testSmallScrap = false; radios = {surface: "2b", film: "none", openMode: "partial"}; }, setMaterialCostForTest(value) { testMaterialCost = value; }, setSmallScrapForTest(value) { testSmallScrap = value; }, route(type, choices, ...args) { selectedType = type; radios = choices; return serviceData(...args); }, quantityToTons, stripLayoutMatch, stripLayouts, subcutLayouts, mixedSubcutLayouts, hybridSubcutLayouts, minimumScrap, cardLayouts, multiStripLayouts, mixedLayoutSearchFits, layoutWeightItems, readStripWidths, charge, maxStrips, minScrap: PRICE.longitudinal.minScrap })'
 ].join('\n'));
 const near = (actual, expected) => assert.ok(Math.abs(actual - expected) < 1e-9, actual + ' != ' + expected);
 test('A: mass balance independently of machine capacity', () => {
@@ -302,6 +302,70 @@ test('optional lower trim permits 6 mm but never 5 mm on every pass', () => {
     assert.equal(api.minimumScrap(),7);
   } finally {
     api.setTypeForTest('strip');
+    api.setSmallScrapForTest(false);
+  }
+});
+
+
+test('hybrid first pass makes finished widths plus exactly one subcoil; only subcoil is cut twice', () => {
+  api.setTypeForTest('strip');
+  api.setMaterialCostForTest(0);
+  const orders=[{width:74,quantity:1},{width:78,quantity:1},{width:87,quantity:1},{width:120,quantity:.35}];
+  try {
+    const rows=api.stripRows(1219,[74,78,87,120],2,3.35,0,'multiple',orders,'tons',0);
+    const hybrid=rows.filter(row=>row.readyWidths?.length && row.subcutGroups?.length===1)
+      .sort((a,b)=>api.compareStripRows(a,b,'multiple',4))[0];
+    assert.ok(hybrid,'must find at least one hybrid layout');
+    assert.equal(hybrid.subcuts,1);
+    assert.equal(hybrid.subcutGroups.length,1);
+    assert.equal(hybrid.operations.filter(operation=>operation.name.includes('Продольная резка')).length,2,
+      'a hybrid needs two cutting operations, not one per strip or per subcoil');
+    assert.equal(hybrid.coilWidth,1219);
+    assert.equal(hybrid.layoutWidths.length,14);
+    near(hybrid.sourceVolume,3.551);
+    near(hybrid.sourceVolume*hybrid.yieldRate,3.35);
+    const group=hybrid.subcutGroups[0];
+    const readyWidth=hybrid.readyWidths.reduce((sum,w)=>sum+w,0);
+    near(readyWidth+group.width+hybrid.sourceScrap,1219);
+    near(group.widths.reduce((sum,w)=>sum+w,0)+group.scrap,group.width);
+    assert.ok(hybrid.readyWidths.length+1<=api.maxStrips(2,1219));
+    assert.ok(group.widths.length<=api.maxStrips(2,group.width));
+    assert.ok(hybrid.sourceScrap>=7&&group.scrap>=7);
+    const directMass=hybrid.sourceVolume*readyWidth/1219;
+    const subcoilMass=hybrid.sourceVolume*group.width/1219;
+    const secondTons=hybrid.sourceVolume*group.widths.reduce((sum,w)=>sum+w,0)/1219;
+    near(directMass+secondTons,3.35);
+    assert.ok(subcoilMass<hybrid.sourceVolume);
+    near(hybrid.operations[1].price,3460*subcoilMass/3.35);
+    near(hybrid.processing,hybrid.operations.reduce((sum,operation)=>sum+operation.price,0));
+    const multi=rows.filter(row=>!row.readyWidths && row.subcuts>1
+       && row.layoutWidths.length===hybrid.layoutWidths.length
+       && [74,78,87,120].every(width=>
+         row.layoutWidths.filter(w=>w===width).length===hybrid.layoutWidths.filter(w=>w===width).length
+       )).sort((a,b)=>a.total-b.total)[0];
+    assert.ok(multi,'same delivered quantities must have two-subcoil alternative');
+    assert.ok(hybrid.total<multi.total,'hybrid must win on cost for same delivered output');
+  } finally {
+    api.setMaterialCostForTest(172000);
+  }
+});
+
+test('hybrid optional 6mm minimum applies to source and subcoil independently', () => {
+  api.setTypeForTest('strip');
+  const orders=[{width:74,quantity:1},{width:78,quantity:1},{width:87,quantity:1},{width:120,quantity:.35}];
+  api.setSmallScrapForTest(true);
+  try {
+    const rows=api.stripRows(1219,[74,78,87,120],2,3.35,0,'multiple',orders,'tons',0);
+    const hybrids=rows.filter(row=>row.readyWidths);
+    assert.ok(hybrids.length);
+    assert.ok(hybrids.some(row=>row.subcutGroups[0].scrap===6));
+    for(const row of hybrids) {
+      assert.ok(row.sourceScrap>=6-1e-8);
+      assert.ok(row.subcutGroups[0].scrap>=6-1e-8);
+      assert.ok(row.readyWidths.length+1<=api.maxStrips(2,1219));
+      near(row.sourceVolume*row.yieldRate,3.35);
+    }
+  } finally {
     api.setSmallScrapForTest(false);
   }
 });
