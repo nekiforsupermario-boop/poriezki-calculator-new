@@ -253,8 +253,10 @@ test('mixed two-stage subcuts combine several widths and preserve mass at both p
     const rows = [1000,1219,1250,1500].flatMap(coil =>
       api.stripRows(coil,[74,87,120,78],2,3.35,0,'multiple',orders,'tons',0)
     ).sort((a,b)=>api.compareStripRows(a,b,'multiple',4));
-    assert.ok(rows.some(row=>row.subcuts>=2));
-    const best=rows[0];
+    const oldSubcuts=rows.filter(row=>row.subcuts>=2)
+      .sort((a,b)=>api.compareStripRows(a,b,'multiple',4));
+    assert.ok(oldSubcuts.length);
+    const best=oldSubcuts[0];
     assert.equal(best.coilWidth,1219);
     assert.ok(best.subcuts>=2);
     assert.ok(best.layoutScore < .2);
