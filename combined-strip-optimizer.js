@@ -140,7 +140,7 @@ function combinedStripLayouts(coilWidth,stripWidths,thickness,orders,unit,length
     const bucket=maskStates.get(state.mask)||[];
     state.ratio=state.counts.reduce((sum,n,i)=>sum+Math.abs(n*widths[i]/state.used-targetShares[i]),0);
     state.scoreHint=state.ratio-0.07*state.used/coilWidth;
-    if(bucket.length>=75 && state.scoreHint>=bucket[bucket.length-1].scoreHint)return;
+    if(bucket.length>=140 && state.scoreHint>=bucket[bucket.length-1].scoreHint)return;
     bucket.push(state);
     if(bucket.length>=140) {
       bucket.sort((a,b)=>a.scoreHint-b.scoreHint||b.used-a.used);
