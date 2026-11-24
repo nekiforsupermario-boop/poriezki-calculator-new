@@ -282,15 +282,18 @@ function hybridSubcutLayouts(coilWidth, stripWidths, thickness, orders, unit, le
       const used=ready.used+group.used;
       const finalCounts=ready.counts.map((value,i)=>value+group.counts[i]);
       const key=finalCounts.join('/');
-      let score=0;
-      for(let i=0;i<widths.length;i++)
-        score+=Math.abs(finished*finalCounts[i]*widths[i]/used-requested[i])/requested[i];
+      let score=0,maxDeviation=0;
+      for(let i=0;i<widths.length;i++) {
+        const deviation=Math.abs(finished*finalCounts[i]*widths[i]/used-requested[i])/requested[i];
+        score+=deviation;
+        maxDeviation=Math.max(maxDeviation,deviation);
+      }
       const sourceVolume=finished*coilWidth/used;
       const firstTariff=longitudinalRate(Math.max(group.width,...widths.filter((_,i)=>ready.counts[i]>0)),firstMode,coilWidth);
       const first=charge(firstTariff,sourceVolume,PRICE.longitudinal.minTons,firstMode)+surcharge;
       const second=Math.max(0,longitudinalRate(group.maxFinal,'open',group.width)+surcharge-discount)*group.width/coilWidth;
       const estimate=(Math.max(0,first)+second)*coilWidth/used+materialCost*(coilWidth-used)/used;
-      const candidate={ready,group,score,estimate,used,counts:finalCounts};
+      const candidate={ready,group,score,maxDeviation,estimate,used,counts:finalCounts};
       const previous=bestByCounts.get(key);
       if(!previous || estimate<previous.estimate-1e-7
         || (Math.abs(estimate-previous.estimate)<1e-7 && group.width<previous.group.width))
@@ -299,14 +302,19 @@ function hybridSubcutLayouts(coilWidth, stripWidths, thickness, orders, unit, le
   }
   if(!bestByCounts.size) return [];
   const candidates=[...bestByCounts.values()];
-  // Сначала максимальная точность заказа. Внутри близкого соответствия
-  // сохраняем и экономически более выгодные планы.
-  candidates.sort((a,b)=>a.score-b.score || a.estimate-b.estimate);
-  const bestScore=candidates[0].score, shortlist=new Map();
-  for(const c of candidates.slice(0,110)) shortlist.set(c.counts.join('/'),c);
-  const affordable=candidates.filter(c=>c.score<=bestScore+0.08)
+  // При допустимом отклонении выбирается экономически лучшая схема.
+  // При небольшом числе вариантов сохраняем все подходящие комбинации.
+  const requestedTolerance=Number($('stripTolerance')?.value);
+  const tolerance=(Number.isFinite(requestedTolerance)&&requestedTolerance>=0&&requestedTolerance<=100
+    ?requestedTolerance:10)/100;
+  const accepted=candidates.filter(c=>c.maxDeviation<=tolerance+1e-9)
     .sort((a,b)=>a.estimate-b.estimate);
-  for(const c of affordable.slice(0,110))shortlist.set(c.counts.join('/'),c);
+  const byAccuracy=candidates.sort((a,b)=>a.maxDeviation-b.maxDeviation
+    ||a.score-b.score||a.estimate-b.estimate);
+  const shortlist=new Map();
+  for(const c of (accepted.length<=1500?accepted:accepted.slice(0,150))) shortlist.set(c.counts.join('/'),c);
+  // Когда ограничения жёсткие, нужны и ближайшие варианты для предупреждения.
+  for(const c of byAccuracy.slice(0,40)) shortlist.set(c.counts.join('/'),c);
   return [...shortlist.values()].map(candidate=>{
     const readyWidths=candidate.ready.counts.flatMap((count,i)=>Array(count).fill(widths[i]));
     const subWidths=candidate.group.counts.flatMap((count,i)=>Array(count).fill(widths[i]));
