@@ -170,8 +170,9 @@ function serviceDataWithMixedSubcut(coilWidth,thickness,sourceVolume,price,layou
     const share=group.width/coilWidth; // масса данного подката / исходная масса
     return sum+Math.max(0,rate+surcharge-discount)*share;
   },0);
+  const firstStageName=directWidths.length?'Продольная резка в ленты и подкат':'Продольная резка подкатов';
   const replacement=[
-    {name:hasGrinding?'2. Продольная резка подкатов':'1. Продольная резка подкатов',
+    {name:`${hasGrinding?'2':'1'}. ${firstStageName}`,
       mode:firstMode==='open'?'открытый рулон до конца':firstMode==='full'?'полный рулон':'частичный рулон',price:first},
     {name:hasGrinding?'3. Продольная резка в ленту':'2. Продольная резка в ленту',
       mode:'открытый рулон до конца',price:second}
