@@ -23,6 +23,7 @@ function hybridStripLayouts(coilWidth, stripWidths, thickness, orders, unit, len
   const maxTotal=sourceLimit*2-1;
   const candidates=[];
   let complete=0,limitReached=false;
+  const exhaustiveLimit=12000;
   function add(counts,used,total) {
     if(total<2 || total>maxTotal) return;
     let score=0,maxDeviation=0;
@@ -35,7 +36,6 @@ function hybridStripLayouts(coilWidth, stripWidths, thickness, orders, unit, len
     // Один подкат должен вместить не менее n - (число ножей - 1) полос.
     const minSubCount=Math.max(1,total-sourceLimit+1);
     const allWidths=counts.flatMap((count,i)=>Array(count).fill(widths[i]));
-    const firstRateGuess=longitudinalRate(Math.max(...widths),firstMode,coilWidth);
     const sourceTons=totalTons*coilWidth/used;
     // Перестановки второй операции проверяются отдельно.
     for(let k=minSubCount;k<=Math.min(total-1,sourceLimit,minSubCount+2);k++){
@@ -66,7 +66,7 @@ function hybridStripLayouts(coilWidth, stripWidths, thickness, orders, unit, len
   function enumerate(i,used,total){
     if(limitReached)return;
     if(i===widths.length){
-      if(++complete>100000){limitReached=true;return;}
+      if(++complete>exhaustiveLimit){limitReached=true;return;}
       add(counts,used,total); return;
     }
     const remain=widths.slice(i+1).reduce((s,w)=>s+w,0);
@@ -102,7 +102,10 @@ function hybridStripLayouts(coilWidth, stripWidths, thickness, orders, unit, len
   const eligible=candidates.filter(x=>x.maxDeviation<=tolerance+1e-9);
   const byCost=(a,b)=>a.approxTotal-b.approxTotal||a.maxDeviation-b.maxDeviation||b.finalWidths.length-a.finalWidths.length;
   const byScore=(a,b)=>a.maxDeviation-b.maxDeviation||a.score-b.score||a.approxTotal-b.approxTotal;
-  const shortlisted=[...eligible.sort(byCost).slice(0,120),...candidates.sort(byScore).slice(0,40)];
+  // Для небольших задач сохраняем ВСЕ подходящие по допуску варианты,
+  // чтобы сравнивать точные цены, а не только предварительную оценку.
+  const economic=eligible.sort(byCost);
+  const shortlisted=[...(limitReached ? economic.slice(0,120) : economic),...candidates.sort(byScore).slice(0,40)];
   const seen=new Set(),result=[];
   for(const item of shortlisted) {
     const key=item.directWidths.slice().sort((a,b)=>a-b).join(',')+'|'+item.subcutGroups[0].widths.slice().sort((a,b)=>a-b).join(',');
