@@ -10,7 +10,7 @@ const api = runInNewContext([
   "let selectedType = 'strip';",
   block('const PRICE =', 'const getRadio ='),
   ...lines,
-  "let radios = {}; let testMaterialCost = 172000, testSmallScrap = false; const getRadio = name => radios[name] || ''; const $ = id => id === 'allowSmallScrap' ? {checked:testSmallScrap} : {value: String(testMaterialCost)}; const numericInputValue = Number;",
+  "let radios = {}; let testMaterialCost = 172000, testSmallScrap = false, testTolerance=10; const getRadio = name => radios[name] || ''; const $ = id => id === 'allowSmallScrap' ? {checked:testSmallScrap} : {value: id === 'stripTolerance' ? String(testTolerance) : String(testMaterialCost)}; const numericInputValue = Number;",
   block('function modeForNextOperation(', 'function showStep('),
   block('function serviceData(', 'function cardLayouts('),
   block('function readStripWidths(', 'function updateStripSizeControl('),
@@ -22,7 +22,7 @@ const api = runInNewContext([
   block('function serviceDataWithSubcut(', 'function cardCutDimensions('),
   block('function stripRowForFinishedVolume(', 'function calculate('),
   block('function bestCardBatchCoilWidth(', 'function calculateBatch('),
-  '({ bestCardBatchCoilWidth, cardRows, cardCutDimensions, compareCardRows, stripRows, compareStripRows, setTypeForTest(type) { selectedType = type; testSmallScrap = false; radios = {surface: "2b", film: "none", openMode: "partial"}; }, setMaterialCostForTest(value) { testMaterialCost = value; }, setSmallScrapForTest(value) { testSmallScrap = value; }, route(type, choices, ...args) { selectedType = type; radios = choices; return serviceData(...args); }, quantityToTons, stripLayoutMatch, stripLayouts, subcutLayouts, mixedSubcutLayouts, hybridSubcutLayouts, minimumScrap, cardLayouts, multiStripLayouts, mixedLayoutSearchFits, layoutWeightItems, readStripWidths, charge, maxStrips, minScrap: PRICE.longitudinal.minScrap })'
+  '({ bestCardBatchCoilWidth, cardRows, cardCutDimensions, compareCardRows, stripRows, compareStripRows, setTypeForTest(type) { selectedType = type; testSmallScrap = false; radios = {surface: "2b", film: "none", openMode: "partial"}; }, setMaterialCostForTest(value) { testMaterialCost = value; }, setSmallScrapForTest(value) { testSmallScrap = value; }, setToleranceForTest(value){testTolerance=value;}, route(type, choices, ...args) { selectedType = type; radios = choices; return serviceData(...args); }, quantityToTons, stripLayoutMatch, stripLayouts, subcutLayouts, mixedSubcutLayouts, hybridSubcutLayouts, minimumScrap, cardLayouts, multiStripLayouts, mixedLayoutSearchFits, layoutWeightItems, readStripWidths, charge, maxStrips, minScrap: PRICE.longitudinal.minScrap })'
 ].join('\n'));
 const near = (actual, expected) => assert.ok(Math.abs(actual - expected) < 1e-9, actual + ' != ' + expected);
 test('A: mass balance independently of machine capacity', () => {
@@ -370,4 +370,43 @@ test('hybrid optional 6mm minimum applies to source and subcoil independently', 
   } finally {
     api.setSmallScrapForTest(false);
   }
+});
+
+
+test('lowest actual cost wins among all plans that fit the per-width tolerance', () => {
+  api.setTypeForTest('strip');
+  api.setMaterialCostForTest(0);
+  api.setToleranceForTest(10);
+  const orders=[{width:74,quantity:1},{width:78,quantity:1},{width:87,quantity:1},{width:120,quantity:.35}];
+  try {
+    const rows=[1000,1219,1250,1500].flatMap(coil=>
+      api.stripRows(coil,[74,78,87,120],2,3.35,0,'multiple',orders,'tons',0)
+    ).sort((a,b)=>api.compareStripRows(a,b,'multiple',4));
+    const best=rows[0];
+    assert.equal(best.coilWidth,1250);
+    assert.equal(best.subcutGroups.length,1);
+    assert.equal(best.readyWidths.length,9);
+    assert.equal(best.subcutGroups[0].width,455);
+    near(best.sourceVolume,3.35*1250/1228);
+    near(best.scrap,22);
+    near(best.processing,6368*best.sourceVolume/3.35+3460*455/1228);
+    assert.ok(best.maxDeviation<.10);
+    const eligible=rows.filter(row=>row.maxDeviation<=.10+1e-9);
+    assert.ok(eligible.length>0);
+    assert.ok(eligible.every(row=>row.total+1e-7>=best.total));
+    assert.equal(best.operations.filter(op=>op.name.includes('Продольная резка')).length,2);
+  } finally {
+    api.setMaterialCostForTest(172000);
+  }
+});
+
+test('price ranking cannot hide a size that violates the configured tolerance', () => {
+  api.setTypeForTest('strip');
+  const example={coilWidth:1250,yieldRate:.9,layoutScore:.2,maxDeviation:.08,total:12000};
+  const cheap={...example,maxDeviation:.13,total:8000};
+  api.setToleranceForTest(10);
+  assert.ok(api.compareStripRows(example,cheap,'multiple',4)<0);
+  api.setToleranceForTest(15);
+  assert.ok(api.compareStripRows(cheap,example,'multiple',4)<0);
+  api.setToleranceForTest(10);
 });
