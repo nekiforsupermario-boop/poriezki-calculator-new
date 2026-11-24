@@ -614,6 +614,39 @@ function actualWeightText(row, reelTons) {
   // Столбцы в шаблоне калькулятора сдвинуты на +1 относительно образца.
   // Не меняем вводы: D24 (доставка), D25 (доплата), B33/C33 (отсрочка)
   // и F26/F27 (воздух/откройник). НДС остаётся 22%, как согласовано ранее.
+  // В F27 хранится доля ДОПОЛНИТЕЛЬНО покупаемого металла к массе готовой
+  // продукции. G27 = F27*M22 считает рублёвые потери, F64 = F27.
+  // Не увеличиваем I8:I21 на отходы повторно — это привело бы к двойному учёту.
+  function excelScrapRatioFromYield(row) {
+    const yieldRate = Number(row?.yieldRate);
+    return Number.isFinite(yieldRate) && yieldRate > 0 && yieldRate <= 1
+      ? (1 - yieldRate) / yieldRate : 0;
+  }
+  function excelScrapRatioForCalculation(calculation, sheet, selectedIndex = 0) {
+    if (!calculation) return 0;
+    if (!calculation.batch) {
+      const row = calculation.rows?.[selectedIndex] || calculation.best;
+      return excelScrapRatioFromYield(row);
+    }
+    // Для сводного расчёта среднее взвешивается по стоимости закупки
+    // каждой позиции (разные цены и доли отходов).
+    let purchaseBase = 0, purchaseLoss = 0, volumeBase = 0, volumeLoss = 0;
+    (calculation.batchItems || []).slice(0, 14).forEach((item, index) => {
+      const ratio = excelScrapRatioFromYield(item.calculation?.best);
+      const volume = Number(item.calculation?.orderVolume || item.calculation?.volume || 0);
+      if (!(volume > 0)) return;
+      volumeBase += volume;
+      volumeLoss += volume * ratio;
+      const unitPrice = Number(sheet?.getCell(`K${45 + index}`)?.value);
+      if (Number.isFinite(unitPrice) && unitPrice > 0) {
+        const cost = volume * unitPrice;
+        purchaseBase += cost;
+        purchaseLoss += cost * ratio;
+      }
+    });
+    return purchaseBase > 0 ? purchaseLoss / purchaseBase
+      : volumeBase > 0 ? volumeLoss / volumeBase : 0;
+  }
   function restoreFinancialBlocks(sheet) {
     const put = (cell, formula) => { sheet.getCell(cell).value = { formula }; };
     const formulas = {
@@ -701,6 +734,9 @@ function actualWeightText(row, reelTons) {
           }
           for (let row = 45; row <= 58; row += 1) if (sheet.getRow(row).getCell(2).value) sheet.getRow(row).getCell(14).value = 2800;
           restoreFinancialBlocks(sheet);
+          // F27 — коэффициент потерь относительно массы готового металла.
+          const selectedIndex = Number($('layoutSelect')?.value) || 0;
+          sheet.getCell('F27').value = excelScrapRatioForCalculation(lastCalculation, sheet, selectedIndex);
           // В образце Баксан P = SUM(M:O); в шаблоне экспорта сдвиг на один столбец.
           for (const start of [8, 45]) {
             for (let row = start; row < start + 14; row += 1) {
