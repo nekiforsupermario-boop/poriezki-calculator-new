@@ -342,7 +342,7 @@ test('hybrid first pass makes finished widths plus exactly one subcoil; only sub
     assert.ok(subcoilMass<hybrid.sourceVolume);
     near(hybrid.operations[1].price,3460*subcoilMass/3.35);
     near(hybrid.processing,hybrid.operations.reduce((sum,operation)=>sum+operation.price,0));
-    const multi=rows.filter(row=>!row.readyWidths && row.subcuts>1
+    const multi=rows.filter(row=>!row.readyWidths?.length && row.subcuts>1
        && row.layoutWidths.length===hybrid.layoutWidths.length
        && [74,78,87,120].every(width=>
          row.layoutWidths.filter(w=>w===width).length===hybrid.layoutWidths.filter(w=>w===width).length
