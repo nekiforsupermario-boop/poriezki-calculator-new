@@ -63,7 +63,24 @@ function modeForNextOperation(operations, initialMode) {
 function showStep(step) { $('typeStep').hidden = step !== 1; $('paramsStep').hidden = step !== 2; $('resultsStep').hidden = step !== 3; ['step1Nav', 'step2Nav', 'step3Nav'].forEach((id, i) => $(id).classList.toggle('active', i + 1 === step)); }
 function setupDeliveryMonths() { const select = $('deliveryMonth'); if (!select || select.options.length) return; const names = ['январь','февраль','март','апрель','май','июнь','июль','август','сентябрь','октябрь','ноябрь','декабрь'], now = new Date(); for (let offset = 0; offset < 12; offset += 1) { const date = new Date(now.getFullYear(), now.getMonth() + offset, 1), option = document.createElement('option'); option.value = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`; option.textContent = `${names[date.getMonth()]} ${date.getFullYear()}`; select.appendChild(option); } }
 function updateUnits() { const count = selectedType === 'sheet' || selectedType === 'card'; document.querySelectorAll('.unit-count').forEach(el => { el.hidden = !count; el.style.display = count ? '' : 'none'; }); document.querySelectorAll('.unit-meters').forEach(el => { el.hidden = count; el.style.display = count ? 'none' : ''; }); $('unitLegend').textContent = 'Единица заказа'; if ((count && getRadio('unit') === 'meters') || (!count && getRadio('unit') === 'pieces')) document.querySelector('input[name="unit"][value="tons"]').checked = true; }
-function addOpenModeField() { const anchor = document.querySelector('.conditions') || document.querySelector('#paramsStep .actions'); if (!anchor || document.querySelector('input[name="openMode"]')) return; const row = document.createElement('div'); row.className = 'choice-row open-mode-row'; row.innerHTML = '<fieldset><legend>Рулон</legend><label class="radio"><input name="openMode" value="partial" type="radio" checked> Частично</label><label class="radio"><input name="openMode" value="full" type="radio"> Полностью</label><label class="radio"><input name="openMode" value="open" type="radio"> Полностью открытый</label></fieldset>'; anchor.before(row); }
+function addOpenModeField() {
+  const actions = document.querySelector('#paramsStep .actions');
+  const slot = $('rollModeSlot');
+  if (!actions) return;
+  let row = document.querySelector('.open-mode-row');
+  if (!row) {
+    row = document.createElement('div');
+    row.className = 'choice-row open-mode-row';
+    row.innerHTML = '<fieldset><legend>Рулон</legend><label class="radio"><input name="openMode" value="partial" type="radio" checked> Частично</label><label class="radio"><input name="openMode" value="full" type="radio"> Полностью</label><label class="radio"><input name="openMode" value="open" type="radio"> Полностью открытый</label></fieldset>';
+  }
+  // Для ленты используем пустую левую колонку рядом с допуском по весу.
+  // Для других изделий поле остаётся самостоятельной строкой над кнопками.
+  if (selectedType === 'strip' && slot) {
+    if (row.parentElement !== slot) slot.appendChild(row);
+  } else if (row.nextElementSibling !== actions || row.parentElement !== actions.parentElement) {
+    actions.before(row);
+  }
+}
 function updateRewindWidthControl() { const label = $('productWidthLabel'), current = $('productWidth'); if (selectedType === 'rewind' && current?.tagName !== 'SELECT') { const select = document.createElement('select'); select.id = 'productWidth'; select.innerHTML = [1000, 1219, 1250, 1500].map(width => `<option value="${width}">${width} мм</option>`).join(''); select.value = [1000, 1219, 1250, 1500].includes(Number(current?.value)) ? current.value : '1250'; current?.replaceWith(select); } else if (selectedType !== 'rewind' && current?.tagName === 'SELECT') { const input = document.createElement('input'); input.id = 'productWidth'; input.type = 'number'; input.min = '1'; input.step = '1'; input.value = current.value || '125'; current.replaceWith(input); } label.firstChild.textContent = selectedType === 'rewind' ? 'Ширина рулона, мм' : 'Ширина готового изделия, мм'; }
 function readStripWidths(raw) {
   const widths = String(raw ?? '').split(/[\/;]/).map(value => Number(value.trim().replace(',', '.')));
