@@ -233,12 +233,15 @@ function cutPlanHtml(row, length = 0, width = 0) {
   const finalLayout = prettyLayout(row.cardSize) || `${row.pieces} полос`;
   if (row.subcutGroups?.length) {
     const groupTitles=row.subcutGroups.map(group=>`${decimal(group.width)} мм`).join(' + ');
+    const readyText = row.readyWidths?.length
+      ? [...new Set(row.readyWidths)].map(width=>`${row.readyWidths.filter(w=>w===width).length}×${decimal(width)} мм`).join(' + ')
+      : '';
     const detail=row.subcutGroups.map((group,index)=>{
       const unique=[...new Set(group.widths)];
       const final=unique.map(w=>`${group.widths.filter(v=>v===w).length}×${decimal(w)} мм`).join(' + ');
       return `<div class="cut-plan-line"><b>${index+1}.</b> Подкат <strong>${decimal(group.width)} мм</strong> → <strong>${final}</strong><span>откройник: ${decimal(group.scrap)} мм</span></div>`;
     }).join('');
-    return `<details class="cut-plan"><summary>Показать этапы</summary><div class="cut-plan-line"><b>1.</b> Исходный рулон <strong>${row.coilWidth} мм</strong> → подкаты: <strong>${groupTitles}</strong><span>откройник исходного рулона: ${decimal(row.sourceScrap)} мм</span></div><div class="cut-plan-line"><b>2.</b> Повторная резка подкатов:</div>${detail}<div class="cut-plan-line"><strong>Готовая лента: ${finalLayout}</strong><span>итоговые потери: ${decimal(row.scrap)} мм</span></div></details>`;
+    return `<details class="cut-plan"><summary>Показать этапы</summary><div class="cut-plan-line"><b>1.</b> Исходный рулон <strong>${row.coilWidth} мм</strong> → ${readyText ? `готовые ленты <strong>${readyText}</strong> + ` : ''}подкат${row.subcutGroups.length>1?'ы':''}: <strong>${groupTitles}</strong><span>откройник исходного рулона: ${decimal(row.sourceScrap)} мм</span></div><div class="cut-plan-line"><b>2.</b> Повторная резка только подкат${row.subcutGroups.length>1?'ов':'а'}:</div>${detail}<div class="cut-plan-line"><strong>Готовая лента: ${finalLayout}</strong><span>итоговые потери: ${decimal(row.scrap)} мм</span></div></details>`;
   }
   if (row.subcutWidths?.length) {
     const subcutLayout = row.subcutWidths.map((width, index) => `${decimal(width)} мм → ${row.subcutCounts[index]} полос`).join(' + ');
@@ -296,7 +299,15 @@ function stripRows(coilWidth, widths, thickness, volume, price, mode, orders, un
         requestedWeights: match.requestedWeights
       }), volume);
     }).filter(Boolean);
-    return direct.concat(subcuts);
+    const hybrid = hybridSubcutLayouts(coilWidth, widths, thickness, orders, unit, length).map(layout => {
+      const match = stripLayoutMatch({ widths: layout.finalWidths }, orders, unit, thickness, length, coilWidth);
+      const row = serviceDataWithHybridSubcut(coilWidth, thickness, match.sourceVolume, price, layout);
+      return row && stripPricingPerFinishedTon(Object.assign(row, {
+        layoutScore: match.score, sourceVolume: match.sourceVolume, finishedVolume: volume,
+        requestedWeights: match.requestedWeights
+      }), volume);
+    }).filter(Boolean);
+    return direct.concat(hybrid, subcuts);
   }
   const rows = widths.flatMap(width => [
     ...stripLayouts(coilWidth, width, thickness).map(layout => stripRowForFinishedVolume(coilWidth, layout, thickness, volume, price)),
