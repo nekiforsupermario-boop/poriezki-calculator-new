@@ -24,7 +24,8 @@ const api = runInNewContext([
   block('function serviceDataWithSubcut(', 'function cardCutDimensions('),
   block('function stripRowForFinishedVolume(', 'function calculate('),
   block('function bestCardBatchCoilWidth(', 'function calculateBatch('),
-  '({ bestCardBatchCoilWidth, cardRows, cardCutDimensions, compareCardRows, stripRows, compareStripRows, sourceCoilChoices, selectStripResults, combinedStripLayouts, singleStripHybridLayouts, setTypeForTest(type) { selectedType = type; testSmallScrap = false; radios = {surface: "2b", film: "none", openMode: "partial"}; }, setMaterialCostForTest(value) { testMaterialCost = value; }, setSmallScrapForTest(value) { testSmallScrap = value; }, setToleranceForTest(value){testTolerance=value;}, route(type, choices, ...args) { selectedType = type; radios = choices; return serviceData(...args); }, quantityToTons, stripLayoutMatch, stripLayouts, subcutLayouts, mixedSubcutLayouts, hybridSubcutLayouts, minimumScrap, cardLayouts, multiStripLayouts, mixedLayoutSearchFits, layoutWeightItems, readStripWidths, charge, maxStrips, minScrap: PRICE.longitudinal.minScrap })'
+  block('function excelScrapRatioFromYield(', 'function restoreFinancialBlocks('),
+  '({ excelScrapRatioFromYield, excelScrapRatioForCalculation, bestCardBatchCoilWidth, cardRows, cardCutDimensions, compareCardRows, stripRows, compareStripRows, sourceCoilChoices, selectStripResults, combinedStripLayouts, singleStripHybridLayouts, setTypeForTest(type) { selectedType = type; testSmallScrap = false; radios = {surface: "2b", film: "none", openMode: "partial"}; }, setMaterialCostForTest(value) { testMaterialCost = value; }, setSmallScrapForTest(value) { testSmallScrap = value; }, setToleranceForTest(value){testTolerance=value;}, route(type, choices, ...args) { selectedType = type; radios = choices; return serviceData(...args); }, quantityToTons, stripLayoutMatch, stripLayouts, subcutLayouts, mixedSubcutLayouts, hybridSubcutLayouts, minimumScrap, cardLayouts, multiStripLayouts, mixedLayoutSearchFits, layoutWeightItems, readStripWidths, charge, maxStrips, minScrap: PRICE.longitudinal.minScrap })'
 ].join('\n'));
 const near = (actual, expected) => assert.ok(Math.abs(actual - expected) < 1e-9, actual + ' != ' + expected);
 test('A: mass balance independently of machine capacity', () => {
@@ -485,4 +486,45 @@ test('one-width order considers first-pass finished strips plus one second-pass 
   assert.ok(layouts.length);
   const rows=api.stripRows(1219,[70],1,1,0,'single',[],'tons',0);
   assert.ok(rows.some(row=>row.readyWidths?.length===1 && row.subcutGroups?.length===1));
+});
+
+
+test('Excel F27 is a loss coefficient based on finished mass (not rubles per tonne)', () => {
+  near(api.excelScrapRatioFromYield({yieldRate:.8}),.25);
+  near(api.excelScrapRatioFromYield({yieldRate:.98}),.02/.98);
+  near(api.excelScrapRatioFromYield({yieldRate:1}),0);
+  near(api.excelScrapRatioFromYield({yieldRate:0}),0);
+  near(api.excelScrapRatioFromYield({}),0);
+  const basePurchaseRub=496524, sourceYield=.92;
+  near(basePurchaseRub*api.excelScrapRatioFromYield({yieldRate:sourceYield}),
+    basePurchaseRub*(1/sourceYield-1));
+});
+
+test('Excel F27 follows the user-selected layout, not the initially recommended row', () => {
+  const c={best:{yieldRate:.95}, rows:[{yieldRate:.95},{yieldRate:.75},{yieldRate:1}]};
+  near(api.excelScrapRatioForCalculation(c,null,0),1/.95-1);
+  near(api.excelScrapRatioForCalculation(c,null,1),1/.75-1);
+  near(api.excelScrapRatioForCalculation(c,null,2),0);
+  near(api.excelScrapRatioForCalculation(c,null,500),1/.95-1);
+});
+
+test('Excel F27 batch is purchase-value weighted; no extra source mass in order cells', () => {
+  const c={batch:true,batchItems:[
+    {calculation:{orderVolume:2,best:{yieldRate:.8}}},
+    {calculation:{orderVolume:1,best:{yieldRate:.5}}}
+  ]};
+  const sheet={getCell:addr=>({value:({'K45':100,'K46':300})[addr]??0})};
+  near(api.excelScrapRatioForCalculation(c,sheet),.7);
+  // M22=2*100+1*300, G27 should be M22*F27=350.
+  near((2*100+1*300)*api.excelScrapRatioForCalculation(c,sheet),350);
+  const noPriceSheet={getCell:()=>({value:0})};
+  near(api.excelScrapRatioForCalculation(c,noPriceSheet),.5);
+  near(api.excelScrapRatioForCalculation({batch:true,batchItems:[]},sheet),0);
+});
+
+test('Excel writer sets F27 while existing spreadsheet formulas reference it once', () => {
+  assert.match(source,/sheet\.getCell\('F27'\)\.value\s*=\s*excelScrapRatioForCalculation/);
+  assert.match(source,/G27:\s*'F27\*M22'/);
+  assert.match(source,/F64:\s*'F27'/);
+  assert.match(source,/G64:\s*'F64\*M59'/);
 });
