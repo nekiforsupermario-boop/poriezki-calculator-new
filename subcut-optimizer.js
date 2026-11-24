@@ -141,22 +141,29 @@ function mixedSubcutLayouts(coilWidth, stripWidths, thickness, orders, unit, len
 // stripPricingPerFinishedTon() затем переводит их в руб/т готовой ленты.
 function serviceDataWithMixedSubcut(coilWidth,thickness,sourceVolume,price,layout) {
   const groups=layout.subcutGroups;
-  if(!groups || groups.length<2) return null;
+  const directWidths=layout.directWidths || [];
+  if(!groups?.length || (groups.length<2 && !directWidths.length)) return null;
   const intermediateWidths=groups.map(group=>group.width);
+  const firstWidths=[...directWidths,...intermediateWidths];
   const finalWidths=layout.finalWidths;
   const trim=minimumScrap();
-  const sourceScrap=coilWidth-intermediateWidths.reduce((sum,w)=>sum+w,0);
+  const sourceScrap=coilWidth-firstWidths.reduce((sum,w)=>sum+w,0);
+  // Готовые полосы первого прохода не отправляем повторно через станок.
+  const expectedWidths=[...directWidths,...groups.flatMap(group=>group.widths)].sort((a,b)=>a-b);
+  const actualWidths=[...finalWidths].sort((a,b)=>a-b);
+  if(expectedWidths.length!==actualWidths.length
+     || expectedWidths.some((width,index)=>Math.abs(width-actualWidths[index])>1e-8)) return null;
   const finalUsed=finalWidths.reduce((sum,w)=>sum+w,0);
   if(sourceScrap+1e-8<trim || !(finalUsed>0)
       || groups.some(g=>g.width-g.widths.reduce((sum,w)=>sum+w,0)+1e-8<trim
         || g.widths.length>maxStrips(thickness,g.width))) return null;
-  const base=serviceData(coilWidth,intermediateWidths,thickness,sourceVolume,price,layout.label);
+  const base=serviceData(coilWidth,firstWidths,thickness,sourceVolume,price,layout.label);
   if(!base) return null;
   const hasGrinding=getRadio('surface')==='4n';
   const firstMode=hasGrinding?'open':(getRadio('openMode')||'open');
   const surcharge=$('specialConditions')?.checked?PRICE.longitudinal.special:0;
   const discount=$('furtherProcessing')?.checked?PRICE.longitudinal.followUpDiscount:0;
-  const firstRate=longitudinalRate(Math.max(...intermediateWidths),firstMode,coilWidth);
+  const firstRate=longitudinalRate(Math.max(...firstWidths),firstMode,coilWidth);
   const first=Math.max(0,charge(firstRate,sourceVolume,PRICE.longitudinal.minTons,firstMode)+surcharge);
   const second=groups.reduce((sum,group)=>{
     const rate=longitudinalRate(Math.max(...group.widths),'open',group.width);
@@ -172,6 +179,7 @@ function serviceDataWithMixedSubcut(coilWidth,thickness,sourceVolume,price,layou
   const prev=base.operations.filter(op=>op.name.includes('Продольная резка')).reduce((s,op)=>s+op.price,0);
   base.operations=base.operations.flatMap(op=>op.name.includes('Продольная резка')?replacement:[op]);
   base.layoutWidths=finalWidths;
+  base.directWidths=directWidths;
   base.pieces=finalWidths.length;
   base.subcutGroups=groups;
   base.subcutWidths=intermediateWidths;
