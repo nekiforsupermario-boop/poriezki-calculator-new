@@ -4,6 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 const source = readFileSync(new URL('../app.js', import.meta.url), 'utf8');
 const optimizerSource = readFileSync(new URL('../subcut-optimizer.js', import.meta.url), 'utf8');
+const combinedSource = readFileSync(new URL('../combined-strip-optimizer.js', import.meta.url), 'utf8');
 const block = (start, end) => source.slice(source.indexOf(start), source.indexOf(end));
 const lines = source.split(/\r?\n/).filter(line => /^(const (decimal|charge) =|function (maxStrips|quantityToTons|thicknessBand|grindingPrice|filmPrice|stripBand|longitudinalRate)\()/.test(line));
 const api = runInNewContext([
@@ -17,12 +18,13 @@ const api = runInNewContext([
   block('function stripLayoutMatch(', 'function setType('),
   block('function cardLayouts(', 'function serviceDataWithSubcut('),
   optimizerSource,
+  combinedSource,
   block('function layoutWeightItems(', 'function renderActualStripWeight('),
   block('function cardCutDimensions(', 'function cutPlanHtml('),
   block('function serviceDataWithSubcut(', 'function cardCutDimensions('),
   block('function stripRowForFinishedVolume(', 'function calculate('),
   block('function bestCardBatchCoilWidth(', 'function calculateBatch('),
-  '({ bestCardBatchCoilWidth, cardRows, cardCutDimensions, compareCardRows, stripRows, compareStripRows, setTypeForTest(type) { selectedType = type; testSmallScrap = false; radios = {surface: "2b", film: "none", openMode: "partial"}; }, setMaterialCostForTest(value) { testMaterialCost = value; }, setSmallScrapForTest(value) { testSmallScrap = value; }, setToleranceForTest(value){testTolerance=value;}, route(type, choices, ...args) { selectedType = type; radios = choices; return serviceData(...args); }, quantityToTons, stripLayoutMatch, stripLayouts, subcutLayouts, mixedSubcutLayouts, hybridSubcutLayouts, minimumScrap, cardLayouts, multiStripLayouts, mixedLayoutSearchFits, layoutWeightItems, readStripWidths, charge, maxStrips, minScrap: PRICE.longitudinal.minScrap })'
+  '({ bestCardBatchCoilWidth, cardRows, cardCutDimensions, compareCardRows, stripRows, compareStripRows, sourceCoilChoices, selectStripResults, combinedStripLayouts, singleStripHybridLayouts, setTypeForTest(type) { selectedType = type; testSmallScrap = false; radios = {surface: "2b", film: "none", openMode: "partial"}; }, setMaterialCostForTest(value) { testMaterialCost = value; }, setSmallScrapForTest(value) { testSmallScrap = value; }, setToleranceForTest(value){testTolerance=value;}, route(type, choices, ...args) { selectedType = type; radios = choices; return serviceData(...args); }, quantityToTons, stripLayoutMatch, stripLayouts, subcutLayouts, mixedSubcutLayouts, hybridSubcutLayouts, minimumScrap, cardLayouts, multiStripLayouts, mixedLayoutSearchFits, layoutWeightItems, readStripWidths, charge, maxStrips, minScrap: PRICE.longitudinal.minScrap })'
 ].join('\n'));
 const near = (actual, expected) => assert.ok(Math.abs(actual - expected) < 1e-9, actual + ' != ' + expected);
 test('A: mass balance independently of machine capacity', () => {
@@ -253,7 +255,7 @@ test('mixed two-stage subcuts combine several widths and preserve mass at both p
     const rows = [1000,1219,1250,1500].flatMap(coil =>
       api.stripRows(coil,[74,87,120,78],2,3.35,0,'multiple',orders,'tons',0)
     ).sort((a,b)=>api.compareStripRows(a,b,'multiple',4));
-    const oldSubcuts=rows.filter(row=>row.subcuts>=2)
+    const oldSubcuts=rows.filter(row=>row.subcuts>=2 && !row.readyWidths?.length)
       .sort((a,b)=>api.compareStripRows(a,b,'multiple',4));
     assert.ok(oldSubcuts.length);
     const best=oldSubcuts[0];
@@ -358,7 +360,7 @@ test('hybrid optional 6mm minimum applies to source and subcoil independently', 
   api.setSmallScrapForTest(true);
   try {
     const rows=api.stripRows(1219,[74,78,87,120],2,3.35,0,'multiple',orders,'tons',0);
-    const hybrids=rows.filter(row=>row.readyWidths);
+    const hybrids=rows.filter(row=>row.readyWidths?.length && row.subcutGroups?.length===1);
     assert.ok(hybrids.length);
     assert.ok(hybrids.some(row=>row.subcutGroups[0].scrap===6));
     for(const row of hybrids) {
@@ -409,4 +411,78 @@ test('price ranking cannot hide a size that violates the configured tolerance', 
   api.setToleranceForTest(15);
   assert.ok(api.compareStripRows(cheap,example,'multiple',4)<0);
   api.setToleranceForTest(10);
+});
+
+
+test('source roll choice restricts only strip calculations', () => {
+  assert.deepEqual(Array.from(api.sourceCoilChoices('strip',53,'any')),[1000,1219,1250,1500]);
+  assert.deepEqual(Array.from(api.sourceCoilChoices('strip',53,'1000')),[1000]);
+  assert.deepEqual(Array.from(api.sourceCoilChoices('strip',120,'1219')),[1219]);
+  assert.deepEqual(Array.from(api.sourceCoilChoices('strip',120,'1250')),[1250]);
+  assert.deepEqual(Array.from(api.sourceCoilChoices('strip',120,'1500')),[1500]);
+  assert.deepEqual(Array.from(api.sourceCoilChoices('strip',120,'invalid')),[1000,1219,1250,1500]);
+  assert.deepEqual(Array.from(api.sourceCoilChoices('card',200,'1000')),[1000,1219,1250,1500]);
+  assert.deepEqual(Array.from(api.sourceCoilChoices('rewind',1250,'1000')),[1250]);
+});
+
+test('results show three distinct schemes for each available source roll', () => {
+  const plans=[
+    {coilWidth:1000,layoutWidths:[120,120],total:1000},
+    {coilWidth:1000,layoutWidths:[120,120],total:1100},
+    {coilWidth:1000,layoutWidths:[120,120,120],total:1200},
+    {coilWidth:1000,layoutWidths:[120,120,120,120],total:1300},
+    {coilWidth:1000,layoutWidths:[120,120,120,120,120],total:1400},
+    {coilWidth:1219,layoutWidths:[120],total:1500},
+    {coilWidth:1219,layoutWidths:[120,120],total:1600}
+  ];
+  const selected=api.selectStripResults(plans,3);
+  assert.equal(selected.filter(row=>row.coilWidth===1000).length,3);
+  assert.equal(selected.filter(row=>row.coilWidth===1219).length,2);
+  assert.equal(selected.find(row=>row.coilWidth===1000).total,1000);
+});
+
+test('combined route can produce ready strips plus multiple subcoils on the same first pass', () => {
+  api.setTypeForTest('strip');
+  api.setMaterialCostForTest(0);
+  const orders=[
+    {width:74,quantity:1},{width:78,quantity:1},
+    {width:87,quantity:1},{width:120,quantity:.35}
+  ];
+  for(const six of [false,true]){
+    api.setSmallScrapForTest(six);
+    const trim=api.minimumScrap();
+    const rows=api.stripRows(1250,[74,78,87,120],2,3.35,0,'multiple',orders,'tons',0);
+    const mixed=rows.filter(row=>row.readyWidths?.length && row.subcutGroups?.length>=2);
+    assert.ok(mixed.length,'must construct mixed first pass with 2+ subcoils');
+    for(const row of mixed){
+      assert.equal(row.operations.filter(op=>op.name.includes('Продольная резка')).length,2);
+      const first=[...row.readyWidths,...row.subcutGroups.map(g=>g.width)];
+      assert.ok(first.length<=api.maxStrips(2,1250));
+      assert.ok(row.sourceScrap>=trim-1e-8);
+      near(first.reduce((sum,w)=>sum+w,0)+row.sourceScrap,1250);
+      const finalWidths=[...row.readyWidths,...row.subcutGroups.flatMap(group=>group.widths)];
+      near(finalWidths.reduce((sum,w)=>sum+w,0)+row.scrap,1250);
+      for(const group of row.subcutGroups){
+        assert.ok(group.widths.length<=api.maxStrips(2,group.width));
+        assert.ok(group.scrap>=trim-1e-8);
+        near(group.widths.reduce((sum,w)=>sum+w,0)+group.scrap,group.width);
+      }
+      near(row.sourceVolume*row.yieldRate,3.35);
+      near(row.processing,row.operations.reduce((sum,op)=>sum+op.price,0));
+      const firstRate=6368; // Все ленты примера шире 30 мм.
+      const source=row.sourceVolume;
+      const secondCost=row.subcutGroups.reduce((sum,group)=>sum+3460*group.width/1250,0);
+      near(row.processing,(firstRate*Math.max(source,3)/source+secondCost)*source/3.35);
+    }
+  }
+  api.setSmallScrapForTest(false);
+  api.setMaterialCostForTest(172000);
+});
+
+test('one-width order considers first-pass finished strips plus one second-pass subcoil', () => {
+  api.setTypeForTest('strip');
+  const layouts=api.singleStripHybridLayouts(1219,70,1);
+  assert.ok(layouts.length);
+  const rows=api.stripRows(1219,[70],1,1,0,'single',[],'tons',0);
+  assert.ok(rows.some(row=>row.readyWidths?.length===1 && row.subcutGroups?.length===1));
 });
